@@ -1,54 +1,8 @@
-import rasterio
-import geopandas as gpd
-from shapely.geometry import box
-from rasterstats import zonal_stats
+# แปลง lat/lon -> UTM
 from pyproj import Transformer
-import pandas as pd
-
-# --- Input ---
-lat = float(input("กรอก Latitude (N): "))
-lon = float(input("กรอก Longitude (E): "))
-width_m = float(input("กรอกความกว้างของพื้นที่ (เมตร): "))
-height_m = float(input("กรอกความยาวของพื้นที่ (เมตร): "))
-
-# --- เปิดไฟล์ภาพ ---
-raster_path = "IMAGERY.TIF"
-with rasterio.open(raster_path) as src:
-    raster_crs = src.crs
-    res_x, res_y = src.res
-    print(f"Resolution: {res_x} x {res_y} m/pixel")
-
-# --- แปลงพิกัด lat/lon -> UTM ---
 transformer = Transformer.from_crs("EPSG:4326", "EPSG:32647", always_xy=True)
 x_center, y_center = transformer.transform(lon, lat)
 
-# --- สร้าง polygon ของแปลง ---
-half_w, half_h = width_m/2, height_m/2
-xmin, xmax = x_center - half_w, x_center + half_w
-ymin, ymax = y_center - half_h, y_center + half_h
-plot_polygon = box(xmin, ymin, xmax, ymax)
-
-# --- ทำ GeoDataFrame ---
-gdf = gpd.GeoDataFrame({"id":[1]}, geometry=[plot_polygon], crs="EPSG:32647")
-gdf = gdf.to_crs(raster_crs)
-
-# --- คำนวณค่าเฉลี่ยแต่ละ band ---
-stats = zonal_stats(
-    gdf,
-    raster_path,
-    stats=["mean"],
-    nodata=0
-)
-
-band_means = stats[0]
-
-# --- แสดงผล ---
-result = {
-    "Blue (B1)": band_means.get("mean_1"),
-    "Green (B2)": band_means.get("mean_2"),
-    "Red (B3)": band_means.get("mean_3"),
-    "NIR (B4)": band_means.get("mean_4")
-}
-
-print("\n📊 ค่าเฉลี่ย Reflectance ในพื้นที่ {}m x {}m รอบพิกัด ({}, {}):".format(width_m, height_m, lat, lon))
-print(pd.Series(result))
+# เช็ค bounds
+if not (475129.529 <= x_center <= 586939.529 and 1932627.815 <= y_center <= 2031777.815):
+    raise ValueError("พิกัดอยู่นอก bounds ของภาพ!")
