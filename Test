@@ -1,27 +1,71 @@
+# bands_indices.py
 import rasterio
 import numpy as np
+import joblib
+from pyproj import Transformer
 
-def compute_bands_and_indices(raster_path, lat, lon, width_m, height_m):
+# โหลดโมเดล SVR ล่วงหน้า
+MODEL_PATH = "svr_agb_model.pkl"
+model = joblib.load(MODEL_PATH)
+
+def compute_bands_and_indices(raster_path, lat, lon, width_m=10, height_m=12):
+    """
+    raster_path: path ของไฟล์ภาพดาวเทียม
+    lat, lon: พิกัด WGS84
+    width_m, height_m: ขนาดพื้นที่ (เมตร)
+    คืนค่า: bands_dict, indices_dict, agb_prediction
+    """
     with rasterio.open(raster_path) as src:
-        # ใช้ src เพื่อคำนวณ pixel row/col และค่า bands
-        # ตัวอย่างง่าย ๆ:
-        row, col = src.index(lon, lat)  # ปรับตาม CRS ของคุณ
-        bands = src.read()[:, row, col]  # แก้เป็นการคำนวณเฉลี่ยถ้าต้องการ
-        # ทำดัชนี
-        R, G, B, NIR = bands[:4]
+        raster_crs = src.crs
+        res_x, res_y = src.res
+        width_px = max(int(width_m / res_x), 1)
+        height_px = max(int(height_m / abs(res_y)), 1)
+
+        # แปลง lat/lon -> CRS ของ raster
+        transformer = Transformer.from_crs("EPSG:4326", raster_crs, always_xy=True)
+        x, y = transformer.transform(lon, lat)
+        row, col = src.index(x, y)
+
+        # กำหนด window รอบ pixel
+        r0 = max(0, row - height_px//2)
+        r1 = min(src.height, row + height_px//2)
+        c0 = max(0, col - width_px//2)
+        c1 = min(src.width, col + width_px//2)
+
+        # อ่านค่า bands อัตโนมัติ
+        bands_data = src.read()[:, r0:r1, c0:c1]  # shape: (bands, rows, cols)
+        bands_mean = bands_data.reshape(bands_data.shape[0], -1).mean(axis=1)
+
+        # จัด dictionary ของ bands (อัตโนมัติ)
+        bands_dict = {f"Band_{i+1}": float(b) for i, b in enumerate(bands_mean)}
+
+        # พยายามหาค่า R, NIR สำหรับดัชนี
+        # สมมติ Band 1 = Blue, Band 2 = Green, Band 3 = Red, Band 4 = NIR ถ้ามี
+        try:
+            R = bands_mean[2]  # Band3 = Red
+            NIR = bands_mean[3]  # Band4 = NIR
+        except IndexError:
+            R = bands_mean[0]
+            NIR = bands_mean[1]
+
         L = 0.5
+        # คำนวณดัชนี
         NDVI = (NIR - R) / (NIR + R + 1e-6)
         TNDVI = np.sqrt(NDVI + L)
         SR = NIR / (R + 1e-6)
         SAVI = ((1+L)*(NIR - R)) / (NIR + R + L + 1e-6)
         MSAVI2 = (2*NIR + 1 - np.sqrt((2*NIR + 1)**2 - 8*(NIR - R))) / 2
-        indices = {
-            "NDVI": NDVI,
-            "TNDVI": TNDVI,
-            "SR": SR,
-            "SAVI": SAVI,
-            "MSAVI2": MSAVI2
+
+        indices_dict = {
+            "NDVI": float(NDVI),
+            "TNDVI": float(TNDVI),
+            "SR": float(SR),
+            "SAVI": float(SAVI),
+            "MSAVI2": float(MSAVI2)
         }
-        bands_dict = {"R": R, "G": G, "B": B, "NIR": NIR}
-        agb_pred = 10.0  # ตัวอย่าง placeholder ให้เอา model มาคำนวณจริง
-        return bands_dict, indices, agb_pred
+
+        # เตรียม feature vector สำหรับ model: [NDVI, TNDVI, SR, SAVI, MSAVI2]
+        X = np.array([NDVI, TNDVI, SR, SAVI, MSAVI2]).reshape(1, -1)
+        agb_pred = float(model.predict(X)[0])
+
+        return bands_dict, indices_dict, agb_pred
