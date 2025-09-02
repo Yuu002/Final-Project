@@ -1,23 +1,66 @@
+# bands_indices.py
 import rasterio
 import numpy as np
 
-with rasterio.open(raster_path) as src:
-    transform = src.transform
-    width, height = src.width, src.height
-    # แปลงพิกัด center -> row/col
-    col, row = ~transform * (x_center, y_center)
-    row, col = int(row), int(col)
+def compute_bands_and_indices(raster_path, lat, lon, width_m, height_m):
+    """
+    raster_path: path to tiff
+    lat, lon: coordinates center
+    width_m, height_m: plot size
+    return: bands_dict, indices_dict
+    """
+    with rasterio.open(raster_path) as src:
+        res_x, res_y = src.res
+        transform = src.transform
+        img_crs = src.crs
 
-    # เช็คว่า row/col อยู่ใน bounds
-    if not (0 <= row < height and 0 <= col < width):
-        raise ValueError("The specified coordinate is outside the raster extent.")
+        # แปลง lat/lon -> pixel
+        from pyproj import Transformer
+        transformer = Transformer.from_crs("EPSG:4326", img_crs, always_xy=True)
+        x, y = transformer.transform(lon, lat)
+        col, row = ~src.transform * (x, y)
+        col, row = int(col), int(row)
 
-    # ดึงค่าตาม window รอบ pixel
-    half_w = int(width_m / src.res[0] / 2)
-    half_h = int(height_m / src.res[1] / 2)
-    r0, r1 = max(0, row-half_h), min(height, row+half_h)
-    c0, c1 = max(0, col-half_w), min(width, col+half_w)
-    data_window = src.read(window=((r0,r1),(c0,c1)))
-    # ถ้าไม่มีค่า data, คืน np.nan
-    if data_window.size == 0:
-        bands_mean = [np.nan]*src.count
+        # ขนาดหน้าต่างครอบพื้นที่
+        width_px = max(1, int(width_m / res_x))
+        height_px = max(1, int(height_m / abs(res_y)))
+        half_w, half_h = width_px//2, height_px//2
+
+        r0 = max(0, row - half_h)
+        r1 = min(src.height, row + half_h + 1)
+        c0 = max(0, col - half_w)
+        c1 = min(src.width, col + half_w + 1)
+
+        # อ่านทุก bands
+        bands_dict = {}
+        for i in range(1, src.count+1):
+            band = src.read(i)[r0:r1, c0:c1]
+            # skip nodata
+            mask = band != src.nodata if src.nodata is not None else np.ones_like(band, dtype=bool)
+            mean_val = np.mean(band[mask])
+            bands_dict[f"Band {i}"] = float(mean_val)
+
+        # หาค่า indices: ต้องมี NIR และ R
+        # สมมติว่า NIR = band with max mean, R = band with min mean
+        band_values = np.array(list(bands_dict.values()))
+        nir_idx = int(np.argmax(band_values))
+        r_idx = int(np.argmin(band_values))
+        NIR = band_values[nir_idx]
+        R = band_values[r_idx]
+
+        L = 0.5
+        NDVI = (NIR - R) / (NIR + R + 1e-6)
+        TNDVI = np.sqrt(NDVI + L)
+        SR = NIR / (R + 1e-6)
+        SAVI = ((1 + L)*(NIR - R)) / (NIR + R + L + 1e-6)
+        MSAVI2 = (2*(NIR + 1) - np.sqrt((2*NIR + 1)**2 - 8*(NIR - R))) / 2
+
+        indices_dict = {
+            "NDVI": float(NDVI),
+            "TNDVI": float(TNDVI),
+            "SR": float(SR),
+            "SAVI": float(SAVI),
+            "MSAVI2": float(MSAVI2)
+        }
+
+        return bands_dict, indices_dict
