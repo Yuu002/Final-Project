@@ -1,51 +1,54 @@
 import streamlit as st
 import pandas as pd
+import rasterio
+from pyproj import Transformer
+from bands_indices import compute_indices
 import joblib
-from compute_bands_indices import compute_bands_indices  # ฟังก์ชันหาค่า bands และ indices
 
 # ---- Load ML model ----
 model = joblib.load("svr_agb_model.pkl")
 
-st.title("AGB Prediction App")
+st.title("AGB Prediction from Satellite Image")
 
-# ---- User input for image upload ----
-uploaded_file = st.file_uploader("Upload satellite image", type=["tif", "tiff"])
+# ---- Upload image ----
+uploaded_file = st.file_uploader("Upload satellite image", type=["tif"])
+if uploaded_file is not None:
+    src = rasterio.open(uploaded_file)
+    raster_crs = src.crs
 
-# ---- User input for coordinates and plot size ----
-lat_str = st.text_input("Latitude (N)", "0")
-lon_str = st.text_input("Longitude (E)", "0")
-width_m_str = st.text_input("Plot width (m)", "10")
-height_m_str = st.text_input("Plot height (m)", "12")
+    # ---- User input ----
+    lat = st.number_input("Latitude (N)", value=0.0)
+    lon = st.number_input("Longitude (E)", value=0.0)
+    width_m = st.number_input("Plot Width (m)", value=10.0)
+    height_m = st.number_input("Plot Height (m)", value=12.0)
 
-# ---- Convert inputs to float ----
-try:
-    lat = float(lat_str)
-    lon = float(lon_str)
-    width_m = float(width_m_str)
-    height_m = float(height_m_str)
-except ValueError:
-    st.error("กรอกค่าตัวเลขให้ถูกต้อง")
-    lat = lon = width_m = height_m = None
+    if st.button("Compute AGB"):
+        # ---- Transform lat/lon -> raster CRS ----
+        transformer = Transformer.from_crs("EPSG:4326", raster_crs, always_xy=True)
+        x, y = transformer.transform(lon, lat)
 
-if uploaded_file and lat is not None:
-    # ---- Compute bands and indices ----
-    bands, indices = compute_bands_indices(uploaded_file, lat, lon, width_m, height_m)
+        # ---- Convert to pixel coordinates ----
+        row, col = src.index(x, y)
 
-    # ---- Display Bands ----
-    st.subheader("Spectral Bands")
-    df_bands = pd.DataFrame(bands, index=[0]).T  # แปลงเป็นแนวตั้ง
-    df_bands.columns = ["Value"]
-    st.table(df_bands)
+        # ---- Compute bands and indices ----
+        bands_dict, indices_dict = compute_indices(src, row, col, width_m, height_m)
 
-    # ---- Display Indices ----
-    st.subheader("Vegetation Indices")
-    df_indices = pd.DataFrame(indices, index=[0]).T  # แนวตั้ง
-    df_indices.columns = ["Value"]
-    st.table(df_indices)
+        # ---- Prepare features for ML model ----
+        feature_order = ["NDVI", "TNDVI", "SR", "SAVI", "MSAVI2"]
+        X = [indices_dict[k] for k in feature_order]
 
-    # ---- Predict AGB ----
-    X = pd.DataFrame([list(indices.values())])  # indices 5 ตัว
-    agb_pred = model.predict(X)[0]
+        # ---- Predict AGB ----
+        agb_pred = model.predict([X])[0]
 
-    st.subheader("Predicted AGB (ton/ha)")
-    st.markdown(f"<h2 style='color:green;'>{agb_pred:.3f}</h2>", unsafe_allow_html=True)
+        # ---- Show results ----
+        st.subheader("Band values")
+        bands_df = pd.DataFrame(list(bands_dict.items()), columns=["Band", "Value"])
+        st.dataframe(bands_df)
+
+        st.subheader("Indices")
+        indices_df = pd.DataFrame(list(indices_dict.items()), columns=["Index", "Value"])
+        st.dataframe(indices_df)
+
+        st.subheader("Predicted AGB (ton/ha)")
+        # ตัวอักษรใหญ่ขึ้น
+        st.markdown(f"<h1 style='color:green'>{agb_pred:.2f}</h1>", unsafe_allow_html=True)
