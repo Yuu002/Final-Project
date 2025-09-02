@@ -1,9 +1,8 @@
-# app.py
 import streamlit as st
 import pandas as pd
 import rasterio
 from pyproj import Transformer
-from bands_indices import compute_indices  # ฟังก์ชันจากไฟล์แยก
+from bands_indices import compute_indices
 import joblib
 
 # ---- Load ML model ----
@@ -14,16 +13,14 @@ st.title("AGB Prediction from Satellite Image")
 # ---- Upload image ----
 uploaded_file = st.file_uploader("Upload satellite image", type=["tif"])
 if uploaded_file is not None:
-    # Open raster
     src = rasterio.open(uploaded_file)
     raster_crs = src.crs
-    width, height = src.width, src.height
 
     # ---- User input ----
-    lat = st.number_input("Latitude (N)")
-    lon = st.number_input("Longitude (E)")
-    width_m = st.number_input("Plot Width (m)")
-    height_m = st.number_input("Plot Height (m)")
+    lat = st.number_input("Latitude (N)", value=0.0)
+    lon = st.number_input("Longitude (E)", value=0.0)
+    width_m = st.number_input("Plot Width (m)", value=10.0)
+    height_m = st.number_input("Plot Height (m)", value=12.0)
 
     if st.button("Compute AGB"):
         # ---- Transform lat/lon -> raster CRS ----
@@ -45,10 +42,13 @@ if uploaded_file is not None:
 
         # ---- Show results ----
         st.subheader("Band values")
-        st.table(pd.DataFrame([bands_dict]))
+        bands_df = pd.DataFrame(list(bands_dict.items()), columns=["Band", "Value"])
+        st.dataframe(bands_df)
 
         st.subheader("Indices")
-        st.table(pd.DataFrame([indices_dict]))
+        indices_df = pd.DataFrame(list(indices_dict.items()), columns=["Index", "Value"])
+        st.dataframe(indices_df)
 
         st.subheader("Predicted AGB (ton/ha)")
-        st.write(agb_pred)
+        # ตัวอักษรใหญ่ขึ้น
+        st.markdown(f"<h1 style='color:green'>{agb_pred:.2f}</h1>", unsafe_allow_html=True)
