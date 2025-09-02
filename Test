@@ -1,73 +1,61 @@
-# bands_indices.py
-import rasterio
-import numpy as np
-from pyproj import Transformer
-from shapely.geometry import box
-from rasterstats import zonal_stats
+# app.py
+import streamlit as st
+import pandas as pd
+import joblib
+from bands_indices import compute_bands_and_indices
+import tempfile
 
-def compute_bands_and_indices(raster_path, lat, lon, width_m=10, height_m=12):
-    """
-    Compute mean spectral bands (all bands in raster) and vegetation indices (NDVI, TNDVI, SR, SAVI, MSAVI2)
-    for a rectangular plot centered at (lat, lon) with given width and height in meters.
-    Returns:
-        bands_dict: {"B1": val, "B2": val, ...}
-        indices_dict: {"NDVI": val, "TNDVI": val, "SR": val, "SAVI": val, "MSAVI2": val}
-    """
-    # --- 1. Load raster and CRS ---
-    with rasterio.open(raster_path) as src:
-        raster_crs = src.crs
-        band_count = src.count
-        res_x, res_y = src.res
-        # transform lat/lon -> raster CRS
-        transformer = Transformer.from_crs("EPSG:4326", raster_crs, always_xy=True)
-        x_center, y_center = transformer.transform(lon, lat)
+st.set_page_config(page_title="AGB Predictor", layout="centered")
+st.title("🌿 AGB Prediction from Satellite Image")
 
-        # --- 2. Create rectangular polygon (plot) ---
-        half_w, half_h = width_m / 2, height_m / 2
-        xmin, xmax = x_center - half_w, x_center + half_w
-        ymin, ymax = y_center - half_h, y_center + half_h
-        plot_poly = box(xmin, ymin, xmax, ymax)
+# --- 1. Upload raster ---
+uploaded_file = st.file_uploader("Upload Satellite Image (TIFF)", type=["tif", "tiff"])
 
-        # --- 3. Extract mean value for each band ---
-        gdf = {'type': 'FeatureCollection',
-               'features':[{'type':'Feature', 'geometry':plot_poly.__geo_interface__, 'properties':{}}]}
-        stats = zonal_stats(gdf, raster_path, stats=['mean'], all_touched=True)
-        if not stats or 'mean' not in stats[0]:
-            raise ValueError("Cannot compute zonal stats for the selected area.")
+# --- 2. User inputs ---
+st.subheader("📍 Plot Information")
+col1, col2 = st.columns(2)
+with col1:
+    lat = st.number_input("Latitude (N)", value=0.0, format="%.6f")
+    lon = st.number_input("Longitude (E)", value=0.0, format="%.6f")
+with col2:
+    width_m = st.number_input("Plot width (m)", value=10.0)
+    height_m = st.number_input("Plot height (m)", value=12.0)
 
-        bands_dict = {}
-        for i in range(1, band_count+1):
-            key = f"B{i}"
-            mean_val = stats[0].get(f"mean_{i}", None)
-            bands_dict[key] = mean_val
+# --- 3. Load model ---
+try:
+    model = joblib.load("svr_agb_model.pkl")
+except:
+    st.error("Cannot load model svr_agb_model.pkl")
+    st.stop()
 
-    # --- 4. Identify NIR and Red bands ---
-    # สมมติ: NIR = last band, Red = 3rd band ถ้ามี
-    if band_count >= 4:
-        red_band_key = f"B3"
-        nir_band_key = f"B{band_count}"
-    else:
-        # ถ้า band น้อยกว่า 4: แทนค่า default
-        red_band_key = f"B{band_count-1}" if band_count>1 else f"B1"
-        nir_band_key = f"B{band_count}"
+# --- 4. Predict button ---
+if uploaded_file and st.button("Predict AGB"):
+    # save uploaded file temporarily
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".tif") as tmp_file:
+        tmp_file.write(uploaded_file.read())
+        raster_path = tmp_file.name
 
-    R = bands_dict[red_band_key]
-    NIR = bands_dict[nir_band_key]
-    L = 0.5
+    try:
+        # --- 5. Compute bands and indices ---
+        bands_dict, indices_dict = compute_bands_and_indices(raster_path, lat, lon, width_m, height_m)
 
-    # --- 5. Compute vegetation indices ---
-    NDVI = (NIR - R) / (NIR + R + 1e-6)
-    TNDVI = np.sqrt((NDVI) + L)
-    SR = NIR / (R + 1e-6)
-    SAVI = ((1+L)*(NIR - R)) / (NIR + R + L + 1e-6)
-    MSAVI2 = (2*NIR + 1 - np.sqrt((2*NIR + 1)**2 - 8*(NIR - R))) / 2
+        # --- 6. Display Bands ---
+        st.subheader("📊 Bands (automatic)")
+        bands_df = pd.DataFrame(list(bands_dict.items()), columns=["Band", "Mean Value"])
+        st.table(bands_df.style.set_properties(**{'text-align': 'left'}))
 
-    indices_dict = {
-        "NDVI": NDVI,
-        "TNDVI": TNDVI,
-        "SR": SR,
-        "SAVI": SAVI,
-        "MSAVI2": MSAVI2
-    }
+        # --- 7. Display Vegetation Indices ---
+        st.subheader("📈 Vegetation Indices")
+        indices_df = pd.DataFrame(list(indices_dict.items()), columns=["Index", "Value"])
+        st.table(indices_df.style.set_properties(**{'text-align': 'left'}))
 
-    return bands_dict, indices_dict
+        # --- 8. Predict AGB ---
+        feature_order = ["NDVI", "TNDVI", "SR", "SAVI", "MSAVI2"]
+        X = [indices_dict[f] for f in feature_order]
+        agb_pred = model.predict([X])[0]
+
+        st.subheader("🌱 Predicted AGB (ton/ha)")
+        st.markdown(f"<h2 style='color:green;'>{agb_pred:.3f}</h2>", unsafe_allow_html=True)
+
+    except Exception as e:
+        st.error(f"Error computing bands/indices: {e}")
