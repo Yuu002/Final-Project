@@ -1,61 +1,23 @@
-# app.py
-import streamlit as st
-import pandas as pd
-import joblib
-from bands_indices import compute_bands_and_indices
-import tempfile
+import rasterio
+import numpy as np
 
-st.set_page_config(page_title="AGB Predictor", layout="centered")
-st.title("🌿 AGB Prediction from Satellite Image")
+with rasterio.open(raster_path) as src:
+    transform = src.transform
+    width, height = src.width, src.height
+    # แปลงพิกัด center -> row/col
+    col, row = ~transform * (x_center, y_center)
+    row, col = int(row), int(col)
 
-# --- 1. Upload raster ---
-uploaded_file = st.file_uploader("Upload Satellite Image (TIFF)", type=["tif", "tiff"])
+    # เช็คว่า row/col อยู่ใน bounds
+    if not (0 <= row < height and 0 <= col < width):
+        raise ValueError("The specified coordinate is outside the raster extent.")
 
-# --- 2. User inputs ---
-st.subheader("📍 Plot Information")
-col1, col2 = st.columns(2)
-with col1:
-    lat = st.number_input("Latitude (N)", value=0.0, format="%.6f")
-    lon = st.number_input("Longitude (E)", value=0.0, format="%.6f")
-with col2:
-    width_m = st.number_input("Plot width (m)", value=10.0)
-    height_m = st.number_input("Plot height (m)", value=12.0)
-
-# --- 3. Load model ---
-try:
-    model = joblib.load("svr_agb_model.pkl")
-except:
-    st.error("Cannot load model svr_agb_model.pkl")
-    st.stop()
-
-# --- 4. Predict button ---
-if uploaded_file and st.button("Predict AGB"):
-    # save uploaded file temporarily
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".tif") as tmp_file:
-        tmp_file.write(uploaded_file.read())
-        raster_path = tmp_file.name
-
-    try:
-        # --- 5. Compute bands and indices ---
-        bands_dict, indices_dict = compute_bands_and_indices(raster_path, lat, lon, width_m, height_m)
-
-        # --- 6. Display Bands ---
-        st.subheader("📊 Bands (automatic)")
-        bands_df = pd.DataFrame(list(bands_dict.items()), columns=["Band", "Mean Value"])
-        st.table(bands_df.style.set_properties(**{'text-align': 'left'}))
-
-        # --- 7. Display Vegetation Indices ---
-        st.subheader("📈 Vegetation Indices")
-        indices_df = pd.DataFrame(list(indices_dict.items()), columns=["Index", "Value"])
-        st.table(indices_df.style.set_properties(**{'text-align': 'left'}))
-
-        # --- 8. Predict AGB ---
-        feature_order = ["NDVI", "TNDVI", "SR", "SAVI", "MSAVI2"]
-        X = [indices_dict[f] for f in feature_order]
-        agb_pred = model.predict([X])[0]
-
-        st.subheader("🌱 Predicted AGB (ton/ha)")
-        st.markdown(f"<h2 style='color:green;'>{agb_pred:.3f}</h2>", unsafe_allow_html=True)
-
-    except Exception as e:
-        st.error(f"Error computing bands/indices: {e}")
+    # ดึงค่าตาม window รอบ pixel
+    half_w = int(width_m / src.res[0] / 2)
+    half_h = int(height_m / src.res[1] / 2)
+    r0, r1 = max(0, row-half_h), min(height, row+half_h)
+    c0, c1 = max(0, col-half_w), min(width, col+half_w)
+    data_window = src.read(window=((r0,r1),(c0,c1)))
+    # ถ้าไม่มีค่า data, คืน np.nan
+    if data_window.size == 0:
+        bands_mean = [np.nan]*src.count
