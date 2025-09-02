@@ -1,104 +1,135 @@
-# ใช้ใน Colab / Jupyter
+# mean_bands_in_plot.py  (รันใน Colab / Jupyter)
 import rasterio
 from rasterio.windows import Window
 from pyproj import Transformer
 import numpy as np
-import matplotlib.pyplot as plt
 import math
+import pandas as pd
 
-# ---------- helper ----------
-def linear_stretch(band, low=2, high=98):
-    """QGIS-like linear stretch based on percentiles; ignore non-finite values."""
-    arr = band.astype(np.float64)
-    arr = arr[np.isfinite(arr)]
-    if arr.size == 0:
-        return np.zeros_like(band, dtype=float)
-    p_low, p_high = np.percentile(arr, (low, high))
-    if p_high <= p_low:
-        # all values identical -> return mid-gray
-        return np.ones_like(band, dtype=float) * 0.5
-    out = (band.astype(np.float64) - p_low) / (p_high - p_low)
-    out = np.clip(out, 0.0, 1.0)
-    return out
+def mean_bands_in_plot(raster_path, lat, lon, width_m, height_m, bands=[1,2,3,4], reflectance_scale=None):
+    """
+    คืนค่า mean ของแต่ละ band ภายในกรอบ width_m x height_m (เมตร) รอบ (lat, lon, WGS84).
+    - raster_path: path ไปยัง GeoTIFF (multi-band)
+    - lat, lon: พิกัด WGS84
+    - width_m, height_m: ขนาดพื้นที่เป็นเมตร
+    - bands: list ของ band indices ที่ต้องการอ่าน (1-based)
+    - reflectance_scale: ถ้าให้ค่า เช่น 10000 จะคืน both DN และ reflectance
+    คืนค่า: pandas.DataFrame ทั้งค่า DN และ (ถ้าเลือก) reflectance, พร้อม metadata สั้นๆ
+    """
 
-# ---------- USER INPUT ----------
-raster_path = "IMAGERY.TIF"   # เปลี่ยนเป็นไฟล์ของคุณ
+    with rasterio.open(raster_path) as src:
+        raster_crs = src.crs
+        res_x, res_y = src.res   # m per pixel (res_yอาจเป็นลบ ขึ้นกับ transform)
+        height_px, width_px = src.height, src.width
+
+        # แปลง lat/lon -> raster CRS (เช่น EPSG:32647)
+        transformer = Transformer.from_crs("EPSG:4326", raster_crs, always_xy=True)
+        x_center, y_center = transformer.transform(lon, lat)
+
+        # หา row,col ของ pixel กลาง
+        row_center, col_center = src.index(x_center, y_center)
+
+        # จำนวนพิกเซลที่ต้องการครอบให้ครอบพื้นที่เมตรที่ระบุ (ใช้ ceil เพื่อให้ครอบ)
+        px_w = max(1, int(math.ceil(width_m / abs(res_x))))
+        px_h = max(1, int(math.ceil(height_m / abs(res_y))))
+
+        # สร้าง window รอบ center (พยายาม center ให้ตรงกลาง)
+        c0 = max(0, col_center - px_w // 2)
+        r0 = max(0, row_center - px_h // 2)
+        c1 = min(width_px, c0 + px_w)
+        r1 = min(height_px, r0 + px_h)
+
+        # ถ้าเกิด window ว่าง (edge cases) ให้ fallback: ใช้ pixel ใกล้เคียง center อย่างน้อย 1x1
+        if (r1 - r0) <= 0 or (c1 - c0) <= 0:
+            r0 = max(0, row_center)
+            c0 = max(0, col_center)
+            r1 = min(height_px, r0 + 1)
+            c1 = min(width_px, c0 + 1)
+
+        win_rows = r1 - r0
+        win_cols = c1 - c0
+
+        # อ่าน bands เป็น masked arrays (จะ ignore nodata อัตโนมัติถ้า raster มี nodata)
+        band_means = []
+        band_medians = []
+        band_stds = []
+        band_counts = []
+        band_min = []
+        band_max = []
+
+        for b in bands:
+            arr = src.read(b, window=Window(c0, r0, win_cols, win_rows), masked=True).astype(np.float64)
+            # mask nodata automatically; drop masked values from stats
+            if np.ma.is_masked(arr):
+                valid = arr.compressed()  # 1-d array of valid values
+            else:
+                valid = arr.ravel()
+
+            if valid.size == 0:
+                mean_v = None
+                med_v = None
+                std_v = None
+                cnt = 0
+                min_v = None
+                max_v = None
+            else:
+                mean_v = float(np.mean(valid))
+                med_v = float(np.median(valid))
+                std_v = float(np.std(valid, ddof=0))
+                cnt = int(valid.size)
+                min_v = float(np.min(valid))
+                max_v = float(np.max(valid))
+
+            band_means.append(mean_v)
+            band_medians.append(med_v)
+            band_stds.append(std_v)
+            band_counts.append(cnt)
+            band_min.append(min_v)
+            band_max.append(max_v)
+
+    # สร้าง DataFrame ผลลัพธ์
+    names = []
+    for i, b in enumerate(bands):
+        names.append(f"Band_{b}")
+
+    df = pd.DataFrame({
+        "band": names,
+        "mean_dn": band_means,
+        "median_dn": band_medians,
+        "std_dn": band_stds,
+        "min_dn": band_min,
+        "max_dn": band_max,
+        "count_pixels": band_counts
+    })
+
+    # ถ้าขอ reflectance ให้แปลง
+    if reflectance_scale is not None:
+        df["mean_reflectance"]  = df["mean_dn"].apply(lambda v: (v/reflectance_scale) if v is not None else None)
+        df["median_reflectance"] = df["median_dn"].apply(lambda v: (v/reflectance_scale) if v is not None else None)
+
+    # metadata สั้น ๆ
+    meta = {
+        "requested_area_m": f"{width_m} x {height_m}",
+        "approx_area_covered_m": f"{win_cols*abs(res_x):.1f} x {win_rows*abs(res_y):.1f}",
+        "window_pixels": f"{win_cols} x {win_rows}",
+        "center_pixel_rowcol": (int(row_center), int(col_center))
+    }
+
+    return df, meta
+
+
+# ------------------ ตัวอย่างใช้งาน (Colab/Jupyter prompt) ------------------
+raster_path = "IMAGERY.TIF"   # แก้เป็นไฟล์ของคุณ
 lat = float(input("กรอก Latitude (N): "))
 lon = float(input("กรอก Longitude (E): "))
 width_m = float(input("กรอกความกว้างของพื้นที่ (เมตร): "))
 height_m = float(input("กรอกความยาวของพื้นที่ (เมตร): "))
 
-# ---------- Open raster and compute pixel window ----------
-with rasterio.open(raster_path) as src:
-    raster_crs = src.crs
-    res_x, res_y = src.res            # e.g. (15.0, 15.0) ; res_y might be negative in transform
-    height_px, width_px = src.height, src.width
+df_stats, meta = mean_bands_in_plot(raster_path, lat, lon, width_m, height_m, bands=[1,2,3,4], reflectance_scale=None)
 
-    # transform lat/lon -> raster CRS (x, y)
-    transformer = Transformer.from_crs("EPSG:4326", raster_crs, always_xy=True)
-    x_center, y_center = transformer.transform(lon, lat)
+print("\n== Metadata ==")
+for k,v in meta.items():
+    print(f"{k}: {v}")
 
-    # get pixel row, col for center (rasterio.index returns (row, col))
-    row_center, col_center = src.index(x_center, y_center)
-
-    # compute number of pixels to cover requested meters (ceil so we cover the area)
-    px_w = max(1, int(math.ceil(width_m / res_x)))           # number of columns to include
-    px_h = max(1, int(math.ceil(height_m / abs(res_y))))     # number of rows to include
-
-    # center the window around center pixel as best as possible
-    c0 = max(0, col_center - px_w // 2)
-    r0 = max(0, row_center - px_h // 2)
-    c1 = min(width_px, c0 + px_w)
-    r1 = min(height_px, r0 + px_h)
-
-    # if window ended up empty (edge cases), force minimum 1x1 around center
-    if (r1 - r0) <= 0 or (c1 - c0) <= 0:
-        r0 = max(0, row_center - 1)
-        c0 = max(0, col_center - 1)
-        r1 = min(height_px, r0 + 3)
-        c1 = min(width_px, c0 + 3)
-
-    win_rows = r1 - r0
-    win_cols = c1 - c0
-
-    print(f"Raster CRS: {raster_crs}, resolution: ({res_x}, {res_y}) m/pix")
-    print(f"Center pixel (row, col): {row_center}, {col_center}")
-    print(f"Window in pixels: rows {r0}:{r1} (count={win_rows}), cols {c0}:{c1} (count={win_cols})")
-    print(f"Approx area: {win_cols*res_x:.1f} m × {win_rows*abs(res_y):.1f} m  (requested {width_m}m x {height_m}m)")
-
-    # read only the window for bands; adjust band indices if needed
-    # assume bands: 1=Blue, 2=Green, 3=Red, 4=NIR
-    # safe-read each band in window to avoid memory issues
-    bands_to_read = [1,2,3]   # for RGB display we read B,G,R
-    band_arrays = []
-    for b in bands_to_read:
-        arr = src.read(b, window=Window(c0, r0, win_cols, win_rows))
-        band_arrays.append(arr)
-
-# ---------- prepare visualization (QGIS-style stretch) ----------
-# band_arrays are in order [B, G, R] ; for RGB we need [R,G,B]
-if len(band_arrays) >= 3:
-    B_win = band_arrays[0]
-    G_win = band_arrays[1]
-    R_win = band_arrays[2]
-    R_vis = linear_stretch(R_win)
-    G_vis = linear_stretch(G_win)
-    B_vis = linear_stretch(B_win)
-    rgb_zoom = np.dstack([R_vis, G_vis, B_vis])
-else:
-    # fallback: if fewer bands, show band 1 stretched as gray
-    single = linear_stretch(band_arrays[0])
-    rgb_zoom = np.dstack([single, single, single])
-
-# ---------- show image ----------
-plt.figure(figsize=(6,6))
-plt.imshow(rgb_zoom)
-plt.title(f"Zoomed (approx: {win_cols}×{win_rows} pixels) ≈ {win_cols*res_x:.1f}m × {win_rows*abs(res_y):.1f}m")
-plt.axis("off")
-
-# mark center location inside the window
-center_r = row_center - r0
-center_c = col_center - c0
-if 0 <= center_r < rgb_zoom.shape[0] and 0 <= center_c < rgb_zoom.shape[1]:
-    plt.scatter([center_c], [center_r], s=80, marker='o', c='yellow', edgecolors='black')
-plt.show()
+print("\n== Band stats ==")
+print(df_stats.to_string(index=False))
