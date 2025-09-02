@@ -1,51 +1,52 @@
-# bands_indices.py
-import rasterio
-import numpy as np
+# app.py
+import streamlit as st
+import pandas as pd
+import joblib
+from bands_indices import compute_bands_and_indices
+import tempfile
 
-def compute_bands_and_indices(raster_path, lat=None, lon=None, width_m=10, height_m=12):
-    """
-    raster_path: path ของไฟล์ภาพดาวเทียม
-    lat, lon: ไม่ใช้ก็ได้ (สามารถใส่ None)
-    width_m, height_m: ขนาดพื้นที่ (เมตร)
-    
-    คืนค่า:
-        bands_dict: ค่าเฉลี่ยของแต่ละ band
-        indices_dict: ค่าดัชนี NDVI, TNDVI, SR, SAVI, MSAVI2
-    """
-    with rasterio.open(raster_path) as src:
-        bands_data = src.read()  # shape: (bands, rows, cols)
+st.set_page_config(page_title="AGB Predictor", layout="centered")
 
-        # ถ้าให้ lat/lon, สามารถทำเฉลี่ยรอบพื้นที่ได้ (ยังไม่ได้ใช้ในตอนนี้)
-        # ตอนนี้คำนวณเฉลี่ยทั้งภาพ
-        bands_mean = bands_data.reshape(bands_data.shape[0], -1).mean(axis=1)
+st.title("🌿 AGB Prediction from Satellite Image")
 
-        # จัด dictionary ของ bands (อัตโนมัติ)
-        bands_dict = {f"Band_{i+1}": float(b) for i, b in enumerate(bands_mean)}
+# --- 1. Upload raster ---
+uploaded_file = st.file_uploader("Upload Satellite Image (TIFF)", type=["tif", "tiff"])
+if uploaded_file:
+    # save temp file
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".tif") as tmp_file:
+        tmp_file.write(uploaded_file.read())
+        raster_path = tmp_file.name
 
-        # พยายามหาค่า Red และ NIR สำหรับดัชนี
-        # สมมติ Band3 = Red, Band4 = NIR ถ้ามี
-        try:
-            R = bands_mean[2]
-            NIR = bands_mean[3]
-        except IndexError:
-            # ถ้ามี bands น้อยกว่า 4 ใช้ Band1 = Red, Band2 = NIR
-            R = bands_mean[0]
-            NIR = bands_mean[1]
+# --- 2. User inputs ---
+lat = st.number_input("Latitude (N)", value=0.0, format="%.6f")
+lon = st.number_input("Longitude (E)", value=0.0, format="%.6f")
+width_m = st.number_input("Plot width (m)", value=10.0)
+height_m = st.number_input("Plot height (m)", value=12.0)
 
-        L = 0.5
-        # คำนวณดัชนี
-        NDVI = (NIR - R) / (NIR + R + 1e-6)
-        TNDVI = np.sqrt(NDVI + L)
-        SR = NIR / (R + 1e-6)
-        SAVI = ((1+L)*(NIR - R)) / (NIR + R + L + 1e-6)
-        MSAVI2 = (2*NIR + 1 - np.sqrt((2*NIR + 1)**2 - 8*(NIR - R))) / 2
+# --- 3. Load model ---
+try:
+    model = joblib.load("svr_agb_model.pkl")
+except:
+    st.error("Cannot load model svr_agb_model.pkl")
 
-        indices_dict = {
-            "NDVI": float(NDVI),
-            "TNDVI": float(TNDVI),
-            "SR": float(SR),
-            "SAVI": float(SAVI),
-            "MSAVI2": float(MSAVI2)
-        }
+# --- 4. Compute bands/indices ---
+if uploaded_file and st.button("Predict AGB"):
+    try:
+        bands_dict, indices_dict = compute_bands_and_indices(raster_path, lat, lon, width_m, height_m)
+        st.subheader("📊 Bands (automatic)")
+        bands_df = pd.DataFrame(list(bands_dict.items()), columns=["Band", "Mean Value"])
+        st.table(bands_df)
 
-        return bands_dict, indices_dict
+        st.subheader("📈 Vegetation Indices")
+        indices_df = pd.DataFrame(list(indices_dict.items()), columns=["Index", "Value"])
+        st.table(indices_df)
+
+        # --- 5. Predict AGB ---
+        feature_order = ["NDVI", "TNDVI", "SR", "SAVI", "MSAVI2"]
+        X = [indices_dict[f] for f in feature_order]
+        agb_pred = model.predict([X])[0]
+
+        st.subheader("🌱 Predicted AGB (ton/ha)")
+        st.markdown(f"<h2 style='color:green;'>{agb_pred:.3f}</h2>", unsafe_allow_html=True)
+    except Exception as e:
+        st.error(f"Error computing bands/indices: {e}")
