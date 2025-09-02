@@ -1,52 +1,48 @@
-# app.py
-import streamlit as st
-import pandas as pd
-import joblib
-from bands_indices import compute_bands_and_indices
-import tempfile
+# bands_indices.py
+import rasterio
+import numpy as np
 
-st.set_page_config(page_title="AGB Predictor", layout="centered")
-
-st.title("🌿 AGB Prediction from Satellite Image")
-
-# --- 1. Upload raster ---
-uploaded_file = st.file_uploader("Upload Satellite Image (TIFF)", type=["tif", "tiff"])
-if uploaded_file:
-    # save temp file
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".tif") as tmp_file:
-        tmp_file.write(uploaded_file.read())
-        raster_path = tmp_file.name
-
-# --- 2. User inputs ---
-lat = st.number_input("Latitude (N)", value=0.0, format="%.6f")
-lon = st.number_input("Longitude (E)", value=0.0, format="%.6f")
-width_m = st.number_input("Plot width (m)", value=10.0)
-height_m = st.number_input("Plot height (m)", value=12.0)
-
-# --- 3. Load model ---
-try:
-    model = joblib.load("svr_agb_model.pkl")
-except:
-    st.error("Cannot load model svr_agb_model.pkl")
-
-# --- 4. Compute bands/indices ---
-if uploaded_file and st.button("Predict AGB"):
-    try:
-        bands_dict, indices_dict = compute_bands_and_indices(raster_path, lat, lon, width_m, height_m)
-        st.subheader("📊 Bands (automatic)")
-        bands_df = pd.DataFrame(list(bands_dict.items()), columns=["Band", "Mean Value"])
-        st.table(bands_df)
-
-        st.subheader("📈 Vegetation Indices")
-        indices_df = pd.DataFrame(list(indices_dict.items()), columns=["Index", "Value"])
-        st.table(indices_df)
-
-        # --- 5. Predict AGB ---
-        feature_order = ["NDVI", "TNDVI", "SR", "SAVI", "MSAVI2"]
-        X = [indices_dict[f] for f in feature_order]
-        agb_pred = model.predict([X])[0]
-
-        st.subheader("🌱 Predicted AGB (ton/ha)")
-        st.markdown(f"<h2 style='color:green;'>{agb_pred:.3f}</h2>", unsafe_allow_html=True)
-    except Exception as e:
-        st.error(f"Error computing bands/indices: {e}")
+def compute_bands_and_indices(raster_path):
+    """
+    อ่าน raster file และคำนวณ:
+    - Spectral bands ทุก band ที่มี
+    - 5 indices: NDVI, TNDVI, SR, SAVI, MSAVI2
+    """
+    bands_list = []
+    
+    # เปิด raster
+    with rasterio.open(raster_path) as src:
+        count = src.count
+        for i in range(count):
+            band = src.read(i+1).astype(float)
+            bands_list.append(band)
+    
+    # เลือก Red และ NIR (สมมติ Red=band 3, NIR=band4 ถ้ามี)
+    if count >= 4:
+        R = bands_list[2]
+        NIR = bands_list[3]
+    else:
+        raise ValueError("Raster ต้องมีอย่างน้อย 4 bands สำหรับ Red/NIR")
+    
+    # ค่า L สำหรับ TNDVI/SAVI
+    L = 0.5
+    
+    # คำนวณ indices
+    NDVI   = (NIR - R) / (NIR + R)
+    TNDVI  = np.sqrt((NIR - R) / (NIR + R) + L)
+    SR     = NIR / R
+    SAVI   = ((1 + L) * (NIR - R)) / (NIR + R + L)
+    MSAVI2 = (2 * NIR + 1 - np.sqrt((2 * NIR + 1)**2 - 8 * (NIR - R))) / 2
+    
+    indices_dict = {
+        "NDVI": NDVI,
+        "TNDVI": TNDVI,
+        "SR": SR,
+        "SAVI": SAVI,
+        "MSAVI2": MSAVI2
+    }
+    
+    return {
+        "bands": bands_list,
+        "indices": indices_dict
+    }
