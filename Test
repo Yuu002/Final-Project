@@ -1,0 +1,65 @@
+import rasterio
+import numpy as np
+import matplotlib.pyplot as plt
+from pyproj import Transformer
+
+# ---------- 1. โหลดภาพ ----------
+raster_path = "IMAGERY.TIF"
+src = rasterio.open(raster_path)
+red   = src.read(3)  # สมมติ band3 = Red
+green = src.read(2)  # สมมติ band2 = Green
+blue  = src.read(1)  # สมมติ band1 = Blue
+
+res_x, res_y = src.res  # ความละเอียดเชิงพื้นที่ (m/pixel)
+height, width = src.height, src.width
+
+# ---------- 2. ฟังก์ชัน stretch ----------
+def linear_stretch(band, low=2, high=98):
+    p_low, p_high = np.percentile(band[band > 0], (low, high))
+    band_stretch = np.clip((band - p_low) / (p_high - p_low), 0, 1)
+    return band_stretch
+
+# ---------- 3. รับ input ----------
+lat = float(input("กรอก Latitude (N): "))
+lon = float(input("กรอก Longitude (E): "))
+width_m = float(input("กรอกความกว้างพื้นที่ (เมตร): "))
+height_m = float(input("กรอกความยาวพื้นที่ (เมตร): "))
+
+# ---------- 4. แปลง lat/lon -> พิกัด pixel ----------
+transformer = Transformer.from_crs("EPSG:4326", src.crs, always_xy=True)
+x, y = transformer.transform(lon, lat)
+col, row = src.index(x, y)
+
+# ---------- 5. คำนวณขอบ window จากขนาดพื้นที่ ----------
+half_win_c = int((width_m / res_x) / 2)   # ครึ่งหนึ่งของความกว้าง (px)
+half_win_r = int((height_m / abs(res_y)) / 2)  # ครึ่งหนึ่งของความสูง (px)
+
+r0 = max(0, row - half_win_r)
+r1 = min(height, row + half_win_r)
+c0 = max(0, col - half_win_c)
+c1 = min(width,  col + half_win_c)
+
+R_win = red[r0:r1, c0:c1]
+G_win = green[r0:r1, c0:c1]
+B_win = blue[r0:r1, c0:c1]
+
+# ---------- 6. ทำ stretch แค่เพื่อ visualization ----------
+R_vis = linear_stretch(R_win)
+G_vis = linear_stretch(G_win)
+B_vis = linear_stretch(B_win)
+
+rgb_zoom = np.dstack([R_vis, G_vis, B_vis])
+
+# ---------- 7. แสดงผล ----------
+plt.figure(figsize=(6,6))
+plt.imshow(rgb_zoom)
+plt.title(f"Zoomed area ({rgb_zoom.shape[1]}×{rgb_zoom.shape[0]} pixels)\n"
+          f"≈ {rgb_zoom.shape[1]*res_x:.1f} m × {rgb_zoom.shape[0]*abs(res_y):.1f} m")
+plt.axis("off")
+
+# ตำแหน่งจุดเป้าหมายตรงกลาง window
+center_r = row - r0
+center_c = col - c0
+if 0 <= center_r < rgb_zoom.shape[0] and 0 <= center_c < rgb_zoom.shape[1]:
+    plt.scatter([center_c], [center_r], s=60, marker="o", c="yellow")
+plt.show()
