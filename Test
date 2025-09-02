@@ -1,42 +1,54 @@
-# bands_indices.py
-import numpy as np
+# app.py
+import streamlit as st
+import pandas as pd
+import rasterio
+from pyproj import Transformer
+from bands_indices import compute_indices  # ฟังก์ชันจากไฟล์แยก
+import joblib
 
-def compute_indices(src, row, col, width_m, height_m):
-    """
-    คำนวณค่า spectral bands และ indices
-    src: rasterio dataset
-    row, col: pixel center
-    width_m, height_m: ขนาดพื้นที่ (เมตร)
-    """
-    # ---- Pixel resolution ----
-    res_x, res_y = src.res  # ขนาด pixel (m)
+# ---- Load ML model ----
+model = joblib.load("svr_agb_model.pkl")
 
-    # ---- ขนาดเป็น pixel ----
-    half_w_px = int((width_m / 2) / res_x)
-    half_h_px = int((height_m / 2) / abs(res_y))
+st.title("AGB Prediction from Satellite Image")
 
-    r0 = max(0, row - half_h_px)
-    r1 = min(src.height, row + half_h_px + 1)
-    c0 = max(0, col - half_w_px)
-    c1 = min(src.width, col + half_w_px + 1)
+# ---- Upload image ----
+uploaded_file = st.file_uploader("Upload satellite image", type=["tif"])
+if uploaded_file is not None:
+    # Open raster
+    src = rasterio.open(uploaded_file)
+    raster_crs = src.crs
+    width, height = src.width, src.height
 
-    # ---- Read all bands ----
-    bands_data = src.read()  # shape: (bands, height, width)
-    bands_dict = {}
-    for i in range(bands_data.shape[0]):
-        band = bands_data[i, r0:r1, c0:c1]
-        bands_dict[f"Band_{i+1}"] = np.mean(band)
+    # ---- User input ----
+    lat = st.number_input("Latitude (N)")
+    lon = st.number_input("Longitude (E)")
+    width_m = st.number_input("Plot Width (m)")
+    height_m = st.number_input("Plot Height (m)")
 
-    # ---- Assume R=Band3, NIR=Band4 for indices ----
-    R = bands_dict.get("Band_3")
-    NIR = bands_dict.get("Band_4")
-    L = 0.5
+    if st.button("Compute AGB"):
+        # ---- Transform lat/lon -> raster CRS ----
+        transformer = Transformer.from_crs("EPSG:4326", raster_crs, always_xy=True)
+        x, y = transformer.transform(lon, lat)
 
-    indices_dict = {}
-    indices_dict["NDVI"] = (NIR - R) / (NIR + R + 1e-6)
-    indices_dict["TNDVI"] = np.sqrt((NIR - R)/(NIR + R + 1e-6) + L)
-    indices_dict["SR"] = NIR / (R + 1e-6)
-    indices_dict["SAVI"] = ((1 + L)*(NIR - R)) / (NIR + R + L + 1e-6)
-    indices_dict["MSAVI2"] = (2*(NIR + 1) - np.sqrt((2*NIR + 1)**2 - 8*(NIR - R))) / 2
+        # ---- Convert to pixel coordinates ----
+        row, col = src.index(x, y)
 
-    return bands_dict, indices_dict
+        # ---- Compute bands and indices ----
+        bands_dict, indices_dict = compute_indices(src, row, col, width_m, height_m)
+
+        # ---- Prepare features for ML model ----
+        feature_order = ["NDVI", "TNDVI", "SR", "SAVI", "MSAVI2"]
+        X = [indices_dict[k] for k in feature_order]
+
+        # ---- Predict AGB ----
+        agb_pred = model.predict([X])[0]
+
+        # ---- Show results ----
+        st.subheader("Band values")
+        st.table(pd.DataFrame([bands_dict]))
+
+        st.subheader("Indices")
+        st.table(pd.DataFrame([indices_dict]))
+
+        st.subheader("Predicted AGB (ton/ha)")
+        st.write(agb_pred)
