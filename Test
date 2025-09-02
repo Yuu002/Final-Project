@@ -1,43 +1,40 @@
-# app.py
-import streamlit as st
-import pandas as pd
+# --- spectral_indices.py ---
+
+import rasterio
 import numpy as np
 
-# --- 1. หน้า UI ---
-st.title("AGB Prediction from Satellite Imagery")
+def read_bands(raster_path):
+    """
+    โหลด raster และคืนค่า array ของทุก bands
+    """
+    with rasterio.open(raster_path) as src:
+        bands = src.read()  # shape: (band_count, height, width)
+        crs = src.crs
+    return bands, crs
 
-st.header("Input Plot Information")
-lat = st.number_input("Latitude (N)", value=18.11302, format="%.6f")
-lon = st.number_input("Longitude (E)", value=99.31819, format="%.6f")
-width_m = st.number_input("Plot width (m)", value=10.0)
-height_m = st.number_input("Plot height (m)", value=12.0)
+def get_pixel_values(bands, row, col):
+    """
+    คืนค่า pixel ของทุก band ที่ระบุ row, col
+    """
+    return bands[:, row, col]
 
-# --- 2. Placeholder สำหรับค่า bands ---
-st.subheader("Spectral Bands (placeholder)")
-# ตอนนี้เรายังไม่ดึงค่าจริงจาก raster
-bands = {
-    "Blue (B1)": np.nan,
-    "Green (B2)": np.nan,
-    "Red (B3)": np.nan,
-    "NIR (B4)": np.nan
-}
-st.write(pd.Series(bands))
+def compute_indices(R, NIR, L=0.5):
+    """
+    คำนวณดัชนี NDVI, TNDVI, SR, SAVI, MSAVI2
+    """
+    eps = 1e-6
+    NDVI = (NIR - R) / (NIR + R + eps)
+    TNDVI = np.sqrt(((NIR - R) / (NIR + R + eps)) + L)
+    SR = NIR / (R + eps)
+    SAVI = ((1 + L) * (NIR - R)) / (NIR + R + L + eps)
+    MSAVI2 = (2*(NIR + 1) - np.sqrt((2*NIR + 1)**2 - 8*(NIR - R))) / 2
+    return {"NDVI": NDVI, "TNDVI": TNDVI, "SR": SR, "SAVI": SAVI, "MSAVI2": MSAVI2}
 
-# --- 3. Placeholder สำหรับค่า indices ---
-st.subheader("Vegetation Indices (placeholder)")
-L = 0.5
-# สมมติค่า bands เป็นค่า placeholder เพื่อให้ UI ทำงาน
-ndvi = tndvi = sr = savi = msavi2 = np.nan
-indices = {
-    "NDVI": ndvi,
-    "TNDVI": tndvi,
-    "SR": sr,
-    "SAVI": savi,
-    "MSAVI2": msavi2
-}
-st.write(pd.Series(indices))
-
-# --- 4. Placeholder สำหรับ AGB ---
-st.subheader("Predicted AGB (ton/ha)")
-agb_pred = np.nan  # จะใช้ model คำนวณจริงต่อไป
-st.write(f"{agb_pred} ton/ha")
+def get_indices_from_pixel(bands, red_band_idx, nir_band_idx, row, col):
+    """
+    ดึง pixel ของ Red/NIR จาก raster และคำนวณดัชนี
+    """
+    pixel = get_pixel_values(bands, row, col)
+    R = pixel[red_band_idx]
+    NIR = pixel[nir_band_idx]
+    return compute_indices(R, NIR)
