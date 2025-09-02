@@ -1,44 +1,27 @@
-import streamlit as st
-import pandas as pd
-import tempfile
-from bands_indices import compute_bands_and_indices  # ฟังก์ชันของคุณ
+import rasterio
+import numpy as np
 
-st.title("AGB Prediction App")
-
-# ---- 1. Upload image ----
-uploaded_file = st.file_uploader("Upload satellite image (.tif)", type=["tif", "tiff"])
-
-# ---- 2. User input ----
-lat = st.number_input("Latitude (N)", value=0.0, format="%.6f")
-lon = st.number_input("Longitude (E)", value=0.0, format="%.6f")
-width_m = st.number_input("Width of plot (m)", value=10.0)
-height_m = st.number_input("Height of plot (m)", value=12.0)
-
-if uploaded_file is not None:
-    # ---- Save uploaded file temporarily ----
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".tif") as tmp_file:
-        tmp_file.write(uploaded_file.read())
-        tmp_path = tmp_file.name
-
-    # ---- Compute bands and indices ----
-    try:
-        bands, indices, agb_pred = compute_bands_and_indices(
-            tmp_path, lat, lon, width_m, height_m
-        )
-
-        # ---- Display bands vertically ----
-        st.subheader("Bands")
-        df_bands = pd.DataFrame(list(bands.items()), columns=["Band", "Value"])
-        st.table(df_bands)
-
-        # ---- Display indices vertically ----
-        st.subheader("Indices")
-        df_indices = pd.DataFrame(list(indices.items()), columns=["Index", "Value"])
-        st.table(df_indices)
-
-        # ---- Display predicted AGB ----
-        st.subheader("Predicted AGB (ton/ha)")
-        st.markdown(f"<h2 style='color:blue;'>{agb_pred:.2f}</h2>", unsafe_allow_html=True)
-
-    except Exception as e:
-        st.error(f"Error computing bands/indices: {e}")
+def compute_bands_and_indices(raster_path, lat, lon, width_m, height_m):
+    with rasterio.open(raster_path) as src:
+        # ใช้ src เพื่อคำนวณ pixel row/col และค่า bands
+        # ตัวอย่างง่าย ๆ:
+        row, col = src.index(lon, lat)  # ปรับตาม CRS ของคุณ
+        bands = src.read()[:, row, col]  # แก้เป็นการคำนวณเฉลี่ยถ้าต้องการ
+        # ทำดัชนี
+        R, G, B, NIR = bands[:4]
+        L = 0.5
+        NDVI = (NIR - R) / (NIR + R + 1e-6)
+        TNDVI = np.sqrt(NDVI + L)
+        SR = NIR / (R + 1e-6)
+        SAVI = ((1+L)*(NIR - R)) / (NIR + R + L + 1e-6)
+        MSAVI2 = (2*NIR + 1 - np.sqrt((2*NIR + 1)**2 - 8*(NIR - R))) / 2
+        indices = {
+            "NDVI": NDVI,
+            "TNDVI": TNDVI,
+            "SR": SR,
+            "SAVI": SAVI,
+            "MSAVI2": MSAVI2
+        }
+        bands_dict = {"R": R, "G": G, "B": B, "NIR": NIR}
+        agb_pred = 10.0  # ตัวอย่าง placeholder ให้เอา model มาคำนวณจริง
+        return bands_dict, indices, agb_pred
