@@ -1,94 +1,42 @@
 # bands_indices.py
 import numpy as np
-import rasterio
 
-def read_bands(raster_path, window=None):
+def compute_indices(src, row, col, width_m, height_m):
     """
-    อ่านค่า band จาก raster
-    window: tuple (row_start, row_end, col_start, col_end) สำหรับ crop
-    return: numpy array shape (bands, height, width)
+    คำนวณค่า spectral bands และ indices
+    src: rasterio dataset
+    row, col: pixel center
+    width_m, height_m: ขนาดพื้นที่ (เมตร)
     """
-    with rasterio.open(raster_path) as src:
-        if window:
-            row_start, row_end, col_start, col_end = window
-            data = src.read(window=((row_start, row_end), (col_start, col_end)))
-        else:
-            data = src.read()
-    return data
+    # ---- Pixel resolution ----
+    res_x, res_y = src.res  # ขนาด pixel (m)
 
-def mean_bands(data):
-    """คำนวณค่าเฉลี่ยของแต่ละ band"""
-    return np.mean(data, axis=(1,2))
+    # ---- ขนาดเป็น pixel ----
+    half_w_px = int((width_m / 2) / res_x)
+    half_h_px = int((height_m / 2) / abs(res_y))
 
-def compute_indices(R, NIR):
-    """คำนวณ NDVI, TNDVI, SR, SAVI, MSAVI2"""
+    r0 = max(0, row - half_h_px)
+    r1 = min(src.height, row + half_h_px + 1)
+    c0 = max(0, col - half_w_px)
+    c1 = min(src.width, col + half_w_px + 1)
+
+    # ---- Read all bands ----
+    bands_data = src.read()  # shape: (bands, height, width)
+    bands_dict = {}
+    for i in range(bands_data.shape[0]):
+        band = bands_data[i, r0:r1, c0:c1]
+        bands_dict[f"Band_{i+1}"] = np.mean(band)
+
+    # ---- Assume R=Band3, NIR=Band4 for indices ----
+    R = bands_dict.get("Band_3")
+    NIR = bands_dict.get("Band_4")
     L = 0.5
-    NDVI   = (NIR - R) / (NIR + R)
-    TNDVI  = np.sqrt(NDVI + L)
-    SR     = NIR / R
-    SAVI   = ((1 + L)*(NIR - R)) / (NIR + R + L)
-    MSAVI2 = (2*(NIR + 1) - np.sqrt((2*NIR + 1)**2 - 8*(NIR - R))) / 2
-    return {"NDVI": NDVI, "TNDVI": TNDVI, "SR": SR, "SAVI": SAVI, "MSAVI2": MSAVI2}
 
-# app.py
-import streamlit as st
-import numpy as np
-import rasterio
-from rasterio.windows import Window
-from pyproj import Transformer
-import pandas as pd
-import joblib
-from bands_indices import read_bands, mean_bands, compute_indices
+    indices_dict = {}
+    indices_dict["NDVI"] = (NIR - R) / (NIR + R + 1e-6)
+    indices_dict["TNDVI"] = np.sqrt((NIR - R)/(NIR + R + 1e-6) + L)
+    indices_dict["SR"] = NIR / (R + 1e-6)
+    indices_dict["SAVI"] = ((1 + L)*(NIR - R)) / (NIR + R + L + 1e-6)
+    indices_dict["MSAVI2"] = (2*(NIR + 1) - np.sqrt((2*NIR + 1)**2 - 8*(NIR - R))) / 2
 
-st.title("AGB Prediction from Satellite Image")
-
-# 1. Upload raster
-uploaded_file = st.file_uploader("Upload Satellite Image", type=["tif", "tiff"])
-if uploaded_file:
-    raster_path = uploaded_file.name
-    with open(raster_path, "wb") as f:
-        f.write(uploaded_file.getbuffer())
-    
-    # 2. User inputs
-    lat = st.number_input("Latitude (N)", value=18.11302)
-    lon = st.number_input("Longitude (E)", value=99.31819)
-    width_m = st.number_input("Width of plot (m)", value=10.0)
-    height_m = st.number_input("Height of plot (m)", value=12.0)
-    
-    # 3. Load raster and convert lat/lon -> pixel
-    with rasterio.open(raster_path) as src:
-        transformer = Transformer.from_crs("EPSG:4326", src.crs, always_xy=True)
-        x, y = transformer.transform(lon, lat)
-        col, row = src.index(x, y)
-        
-        # ขนาด pixel
-        res_x, res_y = src.res
-        w_pix = int(width_m / res_x)
-        h_pix = int(height_m / abs(res_y))
-        
-        # สร้าง window
-        window = Window(col - w_pix//2, row - h_pix//2, w_pix, h_pix)
-        data = read_bands(raster_path, window=((int(window.row_off), int(window.row_off + window.height)),
-                                               (int(window.col_off), int(window.col_off + window.width))))
-    
-    # 4. Compute mean bands
-    bands_mean = mean_bands(data)
-    
-    # สมมติ band3=Red, band4=NIR
-    R, NIR = bands_mean[2], bands_mean[3]
-    indices = compute_indices(R, NIR)
-    
-    # 5. Predict AGB
-    model = joblib.load("svr_agb_model.pkl")
-    X = np.array([indices["NDVI"], indices["TNDVI"], indices["SR"], indices["SAVI"], indices["MSAVI2"]]).reshape(1,-1)
-    agb_pred = model.predict(X)[0]
-    
-    # 6. Show results
-    st.subheader("Mean Spectral Bands")
-    st.table(pd.DataFrame(bands_mean, index=[f"Band {i+1}" for i in range(len(bands_mean))], columns=["Mean"]))
-    
-    st.subheader("Vegetation Indices")
-    st.table(pd.DataFrame(indices, index=[0]))
-    
-    st.subheader("Predicted AGB (ton/ha)")
-    st.write(agb_pred)
+    return bands_dict, indices_dict
