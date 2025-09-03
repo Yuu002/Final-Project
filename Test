@@ -1,64 +1,41 @@
- <Raster_Dimensions>
-    <NCOLS>7454</NCOLS>
-    <NROWS>6610</NROWS>
-    <NBANDS>4</NBANDS>
-  </Raster_Dimensions>
-
-  <Raster_Encoding>
-    <NBITS>8</NBITS>
-    <DATA_TYPE>UNSIGNED</DATA_TYPE>
-    <BYTEORDER>I</BYTEORDER>
-    <BANDS_LAYOUT>BSQ</BANDS_LAYOUT>
-  </Raster_Encoding>
-
-  <Data_Processing>
-    <PROCESSING_LEVEL>2A</PROCESSING_LEVEL>
-    <GEOMETRIC_PROCESSING>CARTO</GEOMETRIC_PROCESSING>
-    <RADIOMETRIC_PROCESSING>SYSTEM</RADIOMETRIC_PROCESSING>
-    <Processing_Options>
-      <Correction_Algorithm>
-        <ALGORITHM_TYPE>ENHANCEMENT</ALGORITHM_TYPE>
-        <ALGORITHM_NAME>Denoising and Deconvolution</ALGORITHM_NAME>
-        <ALGORITHM_ACTIVATION>Y</ALGORITHM_ACTIVATION>
-      </Correction_Algorithm>
-      <Correction_Algorithm>
-        <ALGORITHM_TYPE>RESAMPLING</ALGORITHM_TYPE>
-        <ALGORITHM_NAME>Bicubic resampling</ALGORITHM_NAME>
-        <ALGORITHM_ACTIVATION>Y</ALGORITHM_ACTIVATION>
-      </Correction_Algorithm>
-    </Processing_Options>
-  </Data_Processing>
-
-  <Data_Access>
-    <DATA_FILE_ORGANISATION>BAND_COMPOSITE</DATA_FILE_ORGANISATION>
-    <DATA_FILE_FORMAT version="1.0">GEOTIFF</DATA_FILE_FORMAT>
-    <Data_File>
-      <DATA_FILE_PATH href="IMAGERY.TIF"/>
-    </Data_File>
-  </Data_Access>
-
-  <Image_Display>
-    <Band_Display_Order>
-      <RED_CHANNEL>3</RED_CHANNEL>
-      <GREEN_CHANNEL>2</GREEN_CHANNEL>
-      <BLUE_CHANNEL>1</BLUE_CHANNEL>
-    </Band_Display_Order>
-    <Special_Value>
-      <SPECIAL_VALUE_INDEX>255</SPECIAL_VALUE_INDEX>
-      <SPECIAL_VALUE_TEXT>SATURATED</SPECIAL_VALUE_TEXT>
-      <Special_Value_Color>
-        <RED_LEVEL>1</RED_LEVEL>
-        <GREEN_LEVEL>1</GREEN_LEVEL>
-        <BLUE_LEVEL>1</BLUE_LEVEL>
-      </Special_Value_Color>
-    </Special_Value>
-    <Special_Value>
-      <SPECIAL_VALUE_INDEX>0</SPECIAL_VALUE_INDEX>
-      <SPECIAL_VALUE_TEXT>NODATA</SPECIAL_VALUE_TEXT>
-      <Special_Value_Color>
-        <RED_LEVEL>0</RED_LEVEL>
-        <GREEN_LEVEL>0</GREEN_LEVEL>
-        <BLUE_LEVEL>0</BLUE_LEVEL>
-      </Special_Value_Color>
-    </Special_Value>
-  </Image_Display>
+<Data_Strip>
+    <Data_Strip_Identification>
+      <DATA_STRIP_ID>TS1_2019033_54012_022_MS</DATA_STRIP_ID>
+      <LCNT>287302</LCNT>
+      <IGPST>2019-02-02 03:35:14.000000</IGPST>
+      <FILE_NAME>22</FILE_NAME>
+      <COMPRESSION_RATIO>3.75</COMPRESSION_RATIO>
+    </Data_Strip_Identification>
+    <Frame_Counters>
+      <Band_Counters>
+        <BAND_INDEX>1</BAND_INDEX>
+        <BAND_OFFSET>-121</BAND_OFFSET>
+        <SFSC_BEGIN>2809</SFSC_BEGIN>
+        <SFSC_END>3559</SFSC_END>
+        <DSR_BEGIN>22013</DSR_BEGIN>
+        <DSR_END>28012</DSR_END>
+      </Band_Counters>
+      <Band_Counters>
+        <BAND_INDEX>2</BAND_INDEX>
+        <BAND_OFFSET>-60</BAND_OFFSET>
+        <SFSC_BEGIN>2817</SFSC_BEGIN>
+        <SFSC_END>3567</SFSC_END>
+        <DSR_BEGIN>22074</DSR_BEGIN>
+        <DSR_END>28073</DSR_END>
+      </Band_Counters>
+      <Band_Counters>
+        <BAND_INDEX>3</BAND_INDEX>
+        <BAND_OFFSET>0</BAND_OFFSET>
+        <SFSC_BEGIN>2824</SFSC_BEGIN>
+        <SFSC_END>3574</SFSC_END>
+        <DSR_BEGIN>22134</DSR_BEGIN>
+        <DSR_END>28133</DSR_END>
+      </Band_Counters>
+      <Band_Counters>
+        <BAND_INDEX>4</BAND_INDEX>
+        <BAND_OFFSET>61</BAND_OFFSET>
+        <SFSC_BEGIN>2832</SFSC_BEGIN>
+        <SFSC_END>3582</SFSC_END>
+        <DSR_BEGIN>22195</DSR_BEGIN>
+        <DSR_END>28194</DSR_END>
+      </Band_Counters>
