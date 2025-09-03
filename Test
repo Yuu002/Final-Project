@@ -1,6 +1,39 @@
+import rasterio
+import geopandas as gpd
+from shapely.geometry import box
+from rasterstats import zonal_stats
+from pyproj import Transformer
+
+def compute_mean_bands(raster_path, lat, lon, width_m, height_m):
+    # --- แปลงพิกัด lat/lon -> UTM CRS ของ raster ---
+    with rasterio.open(raster_path) as src:
+        raster_crs = src.crs
+        transformer = Transformer.from_crs("EPSG:4326", raster_crs, always_xy=True)
+        x_center, y_center = transformer.transform(lon, lat)
+
+    # --- สร้าง polygon ของ plot ---
+    half_w, half_h = width_m / 2, height_m / 2
+    plot_polygon = box(x_center - half_w, y_center - half_h,
+                       x_center + half_w, y_center + half_h)
+
+    # --- ทำ GeoDataFrame ---
+    gdf = gpd.GeoDataFrame({"id":[1]}, geometry=[plot_polygon], crs=raster_crs)
+
+    # --- ดึงค่าเฉลี่ยของทุก bands ---
+    stats = zonal_stats(gdf, raster_path, stats=["mean"], geojson_out=True, nodata=None)
+    band_means = stats[0]["properties"]  # dict ของ mean_1, mean_2, ...
+
+    # --- จัดเป็น dictionary สะดวก ---
+    with rasterio.open(raster_path) as src:
+        band_names = [f"Band_{i+1}" for i in range(src.count)]
+
+    result = {band_names[i]: band_means.get(f"mean_{i+1}", None) for i in range(len(band_names))}
+    return result
+
+# --- ตัวอย่างใช้งาน ---
 raster_file = "IMAGERY.TIF"
 lat, lon = 18.11302, 99.31819
-width, height = 10, 12
+width_m, height_m = 10, 12
 
-bands_avg = get_mean_bands(raster_file, lat, lon, width, height)
-print("Mean bands in plot:", bands_avg)
+band_avg = compute_mean_bands(raster_file, lat, lon, width_m, height_m)
+print(band_avg)
