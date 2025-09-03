@@ -10,21 +10,19 @@ from bands_indices import compute_bands_and_indices
 st.set_page_config(page_title="AGB Predictor", layout="wide")
 st.title("🌿 AGB Prediction from Satellite Image")
 
-# --- Create two columns ---
-col_img, col_info = st.columns([1, 1])  # left: image, right: info
+# --- Create two columns: left for upload+image, right for info ---
+col_left, col_right = st.columns([1, 1])
 
-# --- Upload raster ---
-uploaded_file = col_info.file_uploader("Upload Satellite Image (TIFF)", type=["tif","tiff"])
-raster_path = None
-if uploaded_file is not None:
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".tif") as tmp_file:
-        tmp_file.write(uploaded_file.read())
-        raster_path = tmp_file.name
-
-# --- Show image preview on the left ---
-with col_img:
-    st.subheader("🖼 Uploaded Image Preview")
+# --- Upload raster + show image preview on left ---
+with col_left:
+    uploaded_file = st.file_uploader("Upload Satellite Image (TIFF)", type=["tif","tiff"])
+    raster_path = None
     if uploaded_file is not None:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".tif") as tmp_file:
+            tmp_file.write(uploaded_file.read())
+            raster_path = tmp_file.name
+
+        st.subheader("🖼 Uploaded Image Preview")
         try:
             with rasterio.open(raster_path) as src:
                 bands_to_show = min(3, src.count)
@@ -39,8 +37,9 @@ with col_img:
     else:
         st.info("No image uploaded yet.")
 
-# --- User inputs in two columns ---
-with col_info:
+# --- User inputs in two columns on right ---
+with col_right:
+    st.subheader("📋 Input Parameters")
     col_input1, col_input2 = st.columns(2)
     with col_input1:
         lat_str = st.text_input("Latitude (N)", value="0.0")
@@ -49,25 +48,24 @@ with col_info:
         width_m = st.number_input("Plot width (m)", value=10.0)
         height_m = st.number_input("Plot height (m)", value=12.0)
 
-# --- Convert inputs to float ---
-try:
-    lat = float(lat_str)
-except:
-    lat = 0.0
-try:
-    lon = float(lon_str)
-except:
-    lon = 0.0
+    # --- Convert inputs to float ---
+    try:
+        lat = float(lat_str)
+    except:
+        lat = 0.0
+    try:
+        lon = float(lon_str)
+    except:
+        lon = 0.0
 
-# --- Load model ---
-try:
-    model = joblib.load("svr_agb_model.pkl")
-except:
-    col_info.error("Cannot load model svr_agb_model.pkl")
-    model = None
+    # --- Load model ---
+    try:
+        model = joblib.load("svr_agb_model.pkl")
+    except:
+        st.error("Cannot load model svr_agb_model.pkl")
+        model = None
 
-# --- Predict button and results ---
-with col_info:
+    # --- Predict button and results ---
     if st.button("Predict AGB"):
         if raster_path is None:
             st.error("Please upload a raster image first")
