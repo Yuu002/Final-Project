@@ -1,8 +1,0 @@
-streamlit
-rasterio
-pyproj
-joblib
-numpy
-pandas
-plotly
-streamlit_mpl_events
