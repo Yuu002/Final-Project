@@ -1,41 +1,43 @@
-<Data_Strip>
-    <Data_Strip_Identification>
-      <DATA_STRIP_ID>TS1_2019033_54012_022_MS</DATA_STRIP_ID>
-      <LCNT>287302</LCNT>
-      <IGPST>2019-02-02 03:35:14.000000</IGPST>
-      <FILE_NAME>22</FILE_NAME>
-      <COMPRESSION_RATIO>3.75</COMPRESSION_RATIO>
-    </Data_Strip_Identification>
-    <Frame_Counters>
-      <Band_Counters>
-        <BAND_INDEX>1</BAND_INDEX>
-        <BAND_OFFSET>-121</BAND_OFFSET>
-        <SFSC_BEGIN>2809</SFSC_BEGIN>
-        <SFSC_END>3559</SFSC_END>
-        <DSR_BEGIN>22013</DSR_BEGIN>
-        <DSR_END>28012</DSR_END>
-      </Band_Counters>
-      <Band_Counters>
-        <BAND_INDEX>2</BAND_INDEX>
-        <BAND_OFFSET>-60</BAND_OFFSET>
-        <SFSC_BEGIN>2817</SFSC_BEGIN>
-        <SFSC_END>3567</SFSC_END>
-        <DSR_BEGIN>22074</DSR_BEGIN>
-        <DSR_END>28073</DSR_END>
-      </Band_Counters>
-      <Band_Counters>
-        <BAND_INDEX>3</BAND_INDEX>
-        <BAND_OFFSET>0</BAND_OFFSET>
-        <SFSC_BEGIN>2824</SFSC_BEGIN>
-        <SFSC_END>3574</SFSC_END>
-        <DSR_BEGIN>22134</DSR_BEGIN>
-        <DSR_END>28133</DSR_END>
-      </Band_Counters>
-      <Band_Counters>
-        <BAND_INDEX>4</BAND_INDEX>
-        <BAND_OFFSET>61</BAND_OFFSET>
-        <SFSC_BEGIN>2832</SFSC_BEGIN>
-        <SFSC_END>3582</SFSC_END>
-        <DSR_BEGIN>22195</DSR_BEGIN>
-        <DSR_END>28194</DSR_END>
-      </Band_Counters>
+<Dataset_Frame>
+    <Vertex>
+      <FRAME_LON>  98.947769</FRAME_LON>
+      <FRAME_LAT>  18.375849</FRAME_LAT>
+      <FRAME_ROW>1</FRAME_ROW>
+      <FRAME_COL>1291</FRAME_COL>
+      <FRAME_X> 4.9447952903574461e+05</FRAME_X>
+      <FRAME_Y> 2.0317778152483399e+06</FRAME_Y>
+    </Vertex>
+    <Vertex>
+      <FRAME_LON>  99.822186</FRAME_LON>
+      <FRAME_LAT>  18.239750</FRAME_LAT>
+      <FRAME_ROW>992</FRAME_ROW>
+      <FRAME_COL>7453</FRAME_COL>
+      <FRAME_X> 5.8690952903574461e+05</FRAME_X>
+      <FRAME_Y> 2.0169128152483399e+06</FRAME_Y>
+    </Vertex>
+    <Vertex>
+      <FRAME_LON>  98.765660</FRAME_LON>
+      <FRAME_LAT>  17.614387</FRAME_LAT>
+      <FRAME_ROW>5616</FRAME_ROW>
+      <FRAME_COL>1</FRAME_COL>
+      <FRAME_X> 4.7512952903574461e+05</FRAME_X>
+      <FRAME_Y> 1.9475528152483399e+06</FRAME_Y>
+    </Vertex>
+    <Vertex>
+      <FRAME_LON>  99.636826</FRAME_LON>
+      <FRAME_LAT>  17.478852</FRAME_LAT>
+      <FRAME_ROW>6610</FRAME_ROW>
+      <FRAME_COL>6166</FRAME_COL>
+      <FRAME_X> 5.6760452903574461e+05</FRAME_X>
+      <FRAME_Y> 1.9326428152483399e+06</FRAME_Y>
+    </Vertex>
+    <Scene_Center>
+      <FRAME_LON>  99.291754</FRAME_LON>
+      <FRAME_LAT>  17.927948</FRAME_LAT>
+      <FRAME_ROW>3303</FRAME_ROW>
+      <FRAME_COL>3718</FRAME_COL>
+      <FRAME_X> 5.3088452903574461e+05</FRAME_X>
+      <FRAME_Y> 1.9822478152483399e+06</FRAME_Y>
+    </Scene_Center>
+    <SCENE_ORIENTATION> 9.2340034185949520e+00</SCENE_ORIENTATION>
+  </Dataset_Frame>
