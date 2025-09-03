@@ -1,37 +1,10 @@
-import rasterio
-from rasterstats import zonal_stats
-from shapely.geometry import box
-from pyproj import Transformer
-import geopandas as gpd
+print("Pixel indices row:", row_min, "-", row_max)
+print("Pixel indices col:", col_min, "-", col_max)
 
-# --- พิกัดกลางและขนาดแปลง ---
-lat, lon = 18.11302, 99.31819
-width_m, height_m = 10, 12
+pixels_crop = bands[:, row_min:row_max, col_min:col_max]
+print("Cropped shape:", pixels_crop.shape)
 
-# --- แปลง lat/lon -> UTM (ตรงกับ CRS ภาพ) ---
-transformer = Transformer.from_crs("EPSG:4326", "EPSG:32647", always_xy=True)
-x_center, y_center = transformer.transform(lon, lat)
-
-# --- สร้าง polygon ครอบแปลง ---
-half_w, half_h = width_m / 2, height_m / 2
-plot_poly = box(x_center - half_w, y_center - half_h,
-                x_center + half_w, y_center + half_h)
-
-gdf = gpd.GeoDataFrame({"id":[1]}, geometry=[plot_poly], crs="EPSG:32647")
-
-# --- โหลดภาพและดึงค่าเฉลี่ยรอบแปลง ---
-raster_path = "IMAGERY.TIF"
-stats = zonal_stats(gdf, raster_path, stats=["mean"], geojson_out=True, nodata=0)
-
-# --- เก็บค่าเฉลี่ย 4 bands ---
-band_means = {}
-if stats:
-    props = stats[0]["properties"]
-    band_means["Blue"] = props.get("mean_1")
-    band_means["Green"] = props.get("mean_2")
-    band_means["Red"] = props.get("mean_3")
-    band_means["NIR"] = props.get("mean_4")
-
-print("📊 ค่าเฉลี่ยรอบแปลง (10x12 m):")
-for k, v in band_means.items():
-    print(f"{k}: {v:.4f}" if v is not None else f"{k}: None")
+row_min = max(0, row_min)
+row_max = min(src.height, row_max)
+col_min = max(0, col_min)
+col_max = min(src.width, col_max)
