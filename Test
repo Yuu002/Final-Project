@@ -1,43 +1,53 @@
-<Dataset_Frame>
-    <Vertex>
-      <FRAME_LON>  98.947769</FRAME_LON>
-      <FRAME_LAT>  18.375849</FRAME_LAT>
-      <FRAME_ROW>1</FRAME_ROW>
-      <FRAME_COL>1291</FRAME_COL>
-      <FRAME_X> 4.9447952903574461e+05</FRAME_X>
-      <FRAME_Y> 2.0317778152483399e+06</FRAME_Y>
-    </Vertex>
-    <Vertex>
-      <FRAME_LON>  99.822186</FRAME_LON>
-      <FRAME_LAT>  18.239750</FRAME_LAT>
-      <FRAME_ROW>992</FRAME_ROW>
-      <FRAME_COL>7453</FRAME_COL>
-      <FRAME_X> 5.8690952903574461e+05</FRAME_X>
-      <FRAME_Y> 2.0169128152483399e+06</FRAME_Y>
-    </Vertex>
-    <Vertex>
-      <FRAME_LON>  98.765660</FRAME_LON>
-      <FRAME_LAT>  17.614387</FRAME_LAT>
-      <FRAME_ROW>5616</FRAME_ROW>
-      <FRAME_COL>1</FRAME_COL>
-      <FRAME_X> 4.7512952903574461e+05</FRAME_X>
-      <FRAME_Y> 1.9475528152483399e+06</FRAME_Y>
-    </Vertex>
-    <Vertex>
-      <FRAME_LON>  99.636826</FRAME_LON>
-      <FRAME_LAT>  17.478852</FRAME_LAT>
-      <FRAME_ROW>6610</FRAME_ROW>
-      <FRAME_COL>6166</FRAME_COL>
-      <FRAME_X> 5.6760452903574461e+05</FRAME_X>
-      <FRAME_Y> 1.9326428152483399e+06</FRAME_Y>
-    </Vertex>
-    <Scene_Center>
-      <FRAME_LON>  99.291754</FRAME_LON>
-      <FRAME_LAT>  17.927948</FRAME_LAT>
-      <FRAME_ROW>3303</FRAME_ROW>
-      <FRAME_COL>3718</FRAME_COL>
-      <FRAME_X> 5.3088452903574461e+05</FRAME_X>
-      <FRAME_Y> 1.9822478152483399e+06</FRAME_Y>
-    </Scene_Center>
-    <SCENE_ORIENTATION> 9.2340034185949520e+00</SCENE_ORIENTATION>
-  </Dataset_Frame>
+import numpy as np
+
+# --- 1. ข้อมูล vertex (จาก metadata) ---
+vertices = [
+    {"lat": 18.375849, "lon": 98.947769, "row": 1,    "col": 1291},
+    {"lat": 18.239750, "lon": 99.822186, "row": 992,  "col": 7453},
+    {"lat": 17.614387, "lon": 98.765660, "row": 5616, "col": 1},
+    {"lat": 17.478852, "lon": 99.636826, "row": 6610, "col": 6166}
+]
+
+# --- 2. สร้าง affine transform (approximate linear) ---
+# สำหรับลอง mapping lat/lon -> row/col
+lats = np.array([v["lat"] for v in vertices])
+lons = np.array([v["lon"] for v in vertices])
+rows = np.array([v["row"] for v in vertices])
+cols = np.array([v["col"] for v in vertices])
+
+# linear fit: row = f(lat, lon), col = g(lat, lon)
+A = np.vstack([lats, lons, np.ones(len(lats))]).T
+row_coeffs = np.linalg.lstsq(A, rows, rcond=None)[0]
+col_coeffs = np.linalg.lstsq(A, cols, rcond=None)[0]
+
+def latlon_to_pixel(lat, lon):
+    row = row_coeffs[0]*lat + row_coeffs[1]*lon + row_coeffs[2]
+    col = col_coeffs[0]*lat + col_coeffs[1]*lon + col_coeffs[2]
+    return int(round(row)), int(round(col))
+
+# --- 3. ตัวอย่างลองใช้ Scene_Center ---
+lat_c, lon_c = 17.927948, 99.291754
+row_c, col_c = latlon_to_pixel(lat_c, lon_c)
+print("Pixel coordinate of scene center:", row_c, col_c)
+
+# --- 4. ถ้าเรามี raster 4 bands ---
+# สมมติ: red, green, blue, nir = np arrays
+# slice รอบแปลง
+half_window_px = 10  # ตามขนาดแปลง
+r0, r1 = max(0, row_c-half_window_px), min(red.shape[0], row_c+half_window_px)
+c0, c1 = max(0, col_c-half_window_px), min(red.shape[1], col_c+half_window_px)
+
+red_patch   = red[r0:r1, c0:c1]
+green_patch = green[r0:r1, c0:c1]
+blue_patch  = blue[r0:r1, c0:c1]
+nir_patch   = nir[r0:r1, c0:c1]
+
+# --- 5. ค่าเฉลี่ยรอบแปลง ---
+bands_mean = {
+    "Blue": np.mean(blue_patch),
+    "Green": np.mean(green_patch),
+    "Red": np.mean(red_patch),
+    "NIR": np.mean(nir_patch)
+}
+
+print("Average bands around scene center:", bands_mean)
