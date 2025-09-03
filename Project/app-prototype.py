@@ -7,6 +7,7 @@ import rasterio
 import numpy as np
 import matplotlib.pyplot as plt
 from pyproj import Transformer
+import os
 from bands_indices import compute_bands_and_indices
 
 st.set_page_config(page_title="AGB Predictor", layout="wide")
@@ -45,11 +46,12 @@ with col_right:
     except:
         lon = 0.0
 
-    # --- Load model ---
+    # --- Load model (fix path issue) ---
     try:
-        model = joblib.load("svr_agb_model.pkl")
-    except:
-        st.error("Cannot load model svr_agb_model.pkl")
+        model_path = os.path.join(os.path.dirname(__file__), "svr_agb_model.pkl")
+        model = joblib.load(model_path)
+    except Exception as e:
+        st.error(f"Cannot load model svr_agb_model.pkl: {e}")
         model = None
 
 # --- Show image with overlay point on left ---
@@ -112,5 +114,4 @@ with col_right:
                 st.markdown(f"<h2 style='color:green;font-size:30px;'>{agb_pred:.3f}</h2>", unsafe_allow_html=True)
 
             except Exception as e:
-
                 st.error(f"Error computing bands/indices: {e}")
