@@ -1,9 +1,9 @@
-# app-prototype_1.py with auto bands
+# app-prototype_1.py with 4 bands
 import streamlit as st
 import pandas as pd
 import joblib
 import tempfile
-from bands_indices_1 import compute_bands_and_indices
+from bands_indices import compute_bands_and_indices  # แก้ชื่อไฟล์เรียบร้อย
 
 st.set_page_config(page_title="AGB Predictor", layout="centered")
 st.title("🌿 AGB Prediction from Satellite Image")
@@ -17,8 +17,8 @@ if uploaded_file is not None:
         raster_path = tmp_file.name
 
 # --- User inputs ---
-lat = st.number_input("Latitude (N)", value=0.0, format="%.3f")
-lon = st.number_input("Longitude (E)", value=0.0, format="%.3f")
+lat = st.number_input("Latitude (N)", value=0.0, format="%.6f", step=0.000001)
+lon = st.number_input("Longitude (E)", value=0.0, format="%.6f", step=0.000001)
 width_m = st.number_input("Plot width (m)", value=10.0)
 height_m = st.number_input("Plot height (m)", value=12.0)
 
