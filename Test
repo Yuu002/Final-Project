@@ -1,61 +1,42 @@
-# app.py
-import streamlit as st
-import pandas as pd
-import joblib
-import tempfile
-from bands_indices import compute_bands_and_indices
+import rasterio
+import numpy as np
 
-st.set_page_config(page_title="AGB Predictor", layout="centered")
-st.title("🌿 AGB Prediction from Satellite Image")
+# --- 1. ตั้งชื่อไฟล์ภาพไว้ตรงนี้เลย ---
+raster_path = "IMAGERY.TIF"   # <<< ใส่ชื่อไฟล์ภาพที่คุณมี
 
-# --- Upload raster ---
-uploaded_file = st.file_uploader("Upload Satellite Image (TIFF)", type=["tif","tiff"])
-raster_path = None
-if uploaded_file is not None:
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".tif") as tmp_file:
-        tmp_file.write(uploaded_file.read())
-        raster_path = tmp_file.name
+# --- 2. กรอกค่าพิกัดและขนาดพื้นที่ ---
+lat = float(input("กรอก Latitude (N): "))
+lon = float(input("กรอก Longitude (E): "))
+width_m = float(input("กรอกความกว้างของพื้นที่ (เมตร): "))
+height_m = float(input("กรอกความยาวของพื้นที่ (เมตร): "))
 
-# --- User inputs ---
-lat = st.number_input("Latitude (N)", value=0.0, format="%.6f")
-lon = st.number_input("Longitude (E)", value=0.0, format="%.6f")
-width_m = st.number_input("Plot width (m)", value=10.0)
-height_m = st.number_input("Plot height (m)", value=12.0)
+# --- 3. เปิดไฟล์ภาพ ---
+with rasterio.open(raster_path) as src:
+    print(f"\nจำนวน Bands ในภาพ: {src.count}")
+    print(f"Resolution: {src.res} เมตร/พิกเซล")
+    print(f"CRS: {src.crs}\n")
 
-# --- Load model ---
-try:
-    model = joblib.load("svr_agb_model.pkl")
-except:
-    st.error("Cannot load model svr_agb_model.pkl")
-    model = None
+    # --- 4. หาตำแหน่ง pixel จากพิกัด ---
+    row, col = src.index(lon, lat)
 
-# --- Predict button ---
-if st.button("Predict AGB"):
-    if raster_path is None:
-        st.error("Please upload a raster image first")
-    elif model is None:
-        st.error("Model not loaded")
-    else:
-        try:
-            bands_dict, indices_dict = compute_bands_and_indices(raster_path, lat, lon, width_m, height_m)
+    # --- 5. คำนวณขอบเขต window ตามขนาดพื้นที่ ---
+    res_x, res_y = src.res
+    half_w = int((width_m / res_x) / 2)
+    half_h = int((height_m / abs(res_y)) / 2)
 
-            # Bands table (vertical)
-            st.subheader("📊 Bands (B, G, R, NIR)")
-            bands_df = pd.DataFrame(list(bands_dict.items()), columns=["Band", "Mean Value"])
-            st.table(bands_df)
+    r0 = max(0, row - half_h)
+    r1 = min(src.height, row + half_h + 1)
+    c0 = max(0, col - half_w)
+    c1 = min(src.width, col + half_w + 1)
 
-            # Indices table (vertical)
-            st.subheader("📈 Vegetation Indices")
-            indices_df = pd.DataFrame(list(indices_dict.items()), columns=["Index", "Value"])
-            st.table(indices_df)
+    # --- 6. คำนวณค่าเฉลี่ยแต่ละ band ---
+    bands_mean = {}
+    for b in range(1, src.count + 1):
+        band = src.read(b)[r0:r1, c0:c1]
+        band_mean = float(np.nanmean(band))
+        bands_mean[f"Band_{b}"] = band_mean
 
-            # Predict AGB
-            feature_order = ["NDVI","TNDVI","SR","SAVI","MSAVI2"]
-            X = [indices_dict[f] for f in feature_order]
-            agb_pred = model.predict([X])[0]
-
-            st.subheader("🌱 Predicted AGB (ton/ha)")
-            st.markdown(f"<h2 style='color:green;font-size:30px;'>{agb_pred:.3f}</h2>", unsafe_allow_html=True)
-
-        except Exception as e:
-            st.error(f"Error computing bands/indices: {e}")
+# --- 7. แสดงผลลัพธ์ ---
+print("📊 ค่าเฉลี่ย Reflectance ของแต่ละ Band:")
+for band, mean_val in bands_mean.items():
+    print(f"{band}: {mean_val:.4f}")
