@@ -1,59 +1,49 @@
 import rasterio
-import numpy as np
+import geopandas as gpd
+from shapely.geometry import box
 from pyproj import Transformer
+from rasterstats import zonal_stats
+import pandas as pd
 
-# --- 1. ตั้งชื่อไฟล์ภาพ ---
-raster_path = "IMAGERY.TIF"
+# --------------------------
+# 🔹 กำหนดข้อมูลเริ่มต้น
+# --------------------------
+raster_path = "IMAGERY.TIF"   # ไฟล์ภาพ THEOS1 ของคุณ
+lat, lon = 18.11302, 99.31819  # พิกัดกลางแปลง
+width_m, height_m = 10, 12     # ขนาดแปลง (เมตร)
 
-# --- 2. กรอกค่าพิกัดและขนาดพื้นที่ ---
-lat = float(input("กรอก Latitude (N): "))
-lon = float(input("กรอก Longitude (E): "))
-width_m = float(input("กรอกความกว้างของพื้นที่ (เมตร): "))
-height_m = float(input("กรอกความยาวของพื้นที่ (เมตร): "))
+# --------------------------
+# 🔹 1) แปลงพิกัด lat/lon → UTM (EPSG:32647)
+# --------------------------
+transformer = Transformer.from_crs("EPSG:4326", "EPSG:32647", always_xy=True)
+x_center, y_center = transformer.transform(lon, lat)
 
-# --- 3. เปิดไฟล์ภาพ ---
-with rasterio.open(raster_path) as src:
-    print(f"\nจำนวน Bands ในภาพ: {src.count}")
-    print(f"Resolution: {src.res} เมตร/พิกเซล")
-    print(f"CRS: {src.crs}\n")
+# --------------------------
+# 🔹 2) สร้าง polygon ของแปลง (10×12 m)
+# --------------------------
+half_w, half_h = width_m/2, height_m/2
+xmin, xmax = x_center - half_w, x_center + half_w
+ymin, ymax = y_center - half_h, y_center + half_h
+plot_polygon = box(xmin, ymin, xmax, ymax)
 
-    # --- 4. แปลง lat/lon -> CRS ของภาพ (เช่น UTM) ---
-    if src.crs.to_string() != "EPSG:4326":
-        transformer = Transformer.from_crs("EPSG:4326", src.crs, always_xy=True)
-        x, y = transformer.transform(lon, lat)
-    else:
-        x, y = lon, lat
+# --------------------------
+# 🔹 3) ใช้ zonal_stats ดึงค่าเฉลี่ย bands
+# --------------------------
+gdf = gpd.GeoDataFrame({"id":[1]}, geometry=[plot_polygon], crs="EPSG:32647")
 
-    # --- 5. หาตำแหน่ง pixel ---
-    row, col = src.index(x, y)
+stats = zonal_stats(
+    gdf,
+    raster_path,
+    stats=["mean"],
+    nodata=None  # ถ้าไฟล์ไม่มี nodata ให้ใส่ None
+)
 
-    # --- 6. คำนวณขอบเขต window ตามขนาดพื้นที่ ---
-    res_x, res_y = src.res
-    half_w = int((width_m / res_x) / 2)
-    half_h = int((height_m / abs(res_y)) / 2)
+# --------------------------
+# 🔹 4) แสดงผล
+# --------------------------
+band_means = stats[0]  # dict เช่น {'mean_1': 52.3, 'mean_2': 60.1, ...}
 
-    r0 = max(0, row - half_h)
-    r1 = min(src.height, row + half_h + 1)
-    c0 = max(0, col - half_w)
-    c1 = min(src.width, col + half_w + 1)
-
-    # --- 7. คำนวณค่าเฉลี่ยแต่ละ band ---
-    bands_mean = {}
-    for b in range(1, src.count + 1):
-        band = src.read(b)[r0:r1, c0:c1].astype(float)
-
-        # กรองค่า nodata ออก (เช่น 0 หรือ nan)
-        if src.nodata is not None:
-            band[band == src.nodata] = np.nan
-        band[band == 0] = np.nan  # กันไว้ถ้าค่า 0 = ไม่มีข้อมูล
-
-        if np.all(np.isnan(band)):
-            band_mean = None
-        else:
-            band_mean = float(np.nanmean(band))
-        bands_mean[f"Band_{b}"] = band_mean
-
-# --- 8. แสดงผลลัพธ์ ---
-print("📊 ค่าเฉลี่ย Reflectance ของแต่ละ Band:")
-for band, mean_val in bands_mean.items():
-    print(f"{band}: {mean_val}")
+# จัดให้อ่านง่าย
+result = {f"Band {i+1}": band_means[f"mean_{i+1}"] for i in range(len(band_means))}
+print("📊 ค่าเฉลี่ยแต่ละ Band ในแปลง:")
+print(pd.Series(result))
