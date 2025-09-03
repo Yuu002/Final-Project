@@ -1,24 +1,64 @@
-import xml.etree.ElementTree as ET
+ <Raster_Dimensions>
+    <NCOLS>7454</NCOLS>
+    <NROWS>6610</NROWS>
+    <NBANDS>4</NBANDS>
+  </Raster_Dimensions>
 
-dim_file = "IMAGERY.dim"
-tree = ET.parse(dim_file)
-root = tree.getroot()
+  <Raster_Encoding>
+    <NBITS>8</NBITS>
+    <DATA_TYPE>UNSIGNED</DATA_TYPE>
+    <BYTEORDER>I</BYTEORDER>
+    <BANDS_LAYOUT>BSQ</BANDS_LAYOUT>
+  </Raster_Encoding>
 
-# ดูว่า root tag อะไร
-print("Root tag:", root.tag)
+  <Data_Processing>
+    <PROCESSING_LEVEL>2A</PROCESSING_LEVEL>
+    <GEOMETRIC_PROCESSING>CARTO</GEOMETRIC_PROCESSING>
+    <RADIOMETRIC_PROCESSING>SYSTEM</RADIOMETRIC_PROCESSING>
+    <Processing_Options>
+      <Correction_Algorithm>
+        <ALGORITHM_TYPE>ENHANCEMENT</ALGORITHM_TYPE>
+        <ALGORITHM_NAME>Denoising and Deconvolution</ALGORITHM_NAME>
+        <ALGORITHM_ACTIVATION>Y</ALGORITHM_ACTIVATION>
+      </Correction_Algorithm>
+      <Correction_Algorithm>
+        <ALGORITHM_TYPE>RESAMPLING</ALGORITHM_TYPE>
+        <ALGORITHM_NAME>Bicubic resampling</ALGORITHM_NAME>
+        <ALGORITHM_ACTIVATION>Y</ALGORITHM_ACTIVATION>
+      </Correction_Algorithm>
+    </Processing_Options>
+  </Data_Processing>
 
-# แสดงข้อมูล bands
-bands = root.findall(".//Raster_Data/Band")  # path ขึ้นอยู่กับ structure จริง
-print(f"Number of bands: {len(bands)}")
-for b in bands:
-    print("Band name:", b.get("name"), "Wavelength:", b.get("wavelength"))
+  <Data_Access>
+    <DATA_FILE_ORGANISATION>BAND_COMPOSITE</DATA_FILE_ORGANISATION>
+    <DATA_FILE_FORMAT version="1.0">GEOTIFF</DATA_FILE_FORMAT>
+    <Data_File>
+      <DATA_FILE_PATH href="IMAGERY.TIF"/>
+    </Data_File>
+  </Data_Access>
 
-# Spatial resolution
-pixel_size = root.find(".//Pixel_Size")
-if pixel_size is not None:
-    print("Pixel size:", pixel_size.attrib)
-
-# CRS
-projection = root.find(".//Projection")
-if projection is not None:
-    print("Projection:", projection.attrib)
+  <Image_Display>
+    <Band_Display_Order>
+      <RED_CHANNEL>3</RED_CHANNEL>
+      <GREEN_CHANNEL>2</GREEN_CHANNEL>
+      <BLUE_CHANNEL>1</BLUE_CHANNEL>
+    </Band_Display_Order>
+    <Special_Value>
+      <SPECIAL_VALUE_INDEX>255</SPECIAL_VALUE_INDEX>
+      <SPECIAL_VALUE_TEXT>SATURATED</SPECIAL_VALUE_TEXT>
+      <Special_Value_Color>
+        <RED_LEVEL>1</RED_LEVEL>
+        <GREEN_LEVEL>1</GREEN_LEVEL>
+        <BLUE_LEVEL>1</BLUE_LEVEL>
+      </Special_Value_Color>
+    </Special_Value>
+    <Special_Value>
+      <SPECIAL_VALUE_INDEX>0</SPECIAL_VALUE_INDEX>
+      <SPECIAL_VALUE_TEXT>NODATA</SPECIAL_VALUE_TEXT>
+      <Special_Value_Color>
+        <RED_LEVEL>0</RED_LEVEL>
+        <GREEN_LEVEL>0</GREEN_LEVEL>
+        <BLUE_LEVEL>0</BLUE_LEVEL>
+      </Special_Value_Color>
+    </Special_Value>
+  </Image_Display>
