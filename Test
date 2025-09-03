@@ -1,4 +1,4 @@
-# app_streamlit_full.py
+# app.py
 import streamlit as st
 import pandas as pd
 import joblib
@@ -18,25 +18,37 @@ if uploaded_file is not None:
         tmp_file.write(uploaded_file.read())
         raster_path = tmp_file.name
 
-    # --- Preview image ---
+    # --- Show image preview ---
     try:
         with rasterio.open(raster_path) as src:
-            # อ่าน 3 band สำหรับ preview (R,G,B)
+            # อ่าน 3 band แรกสำหรับ preview
             bands_to_show = min(3, src.count)
-            img_array = src.read(list(range(1,bands_to_show+1)))
+            img_array = src.read(list(range(1, bands_to_show+1)))
+            # เปลี่ยนเป็น H x W x C
             img_array = np.transpose(img_array, (1,2,0))
+            # Normalize เป็น 0-255
             if img_array.dtype != np.uint8:
-                img_array = ((img_array - img_array.min()) / img_array.ptp() * 255).astype(np.uint8)
+                img_array = ((img_array - np.nanmin(img_array)) / np.nanmax(img_array - np.nanmin(img_array)) * 255).astype(np.uint8)
             st.subheader("🖼 Uploaded Image Preview")
             st.image(img_array, use_column_width=True)
     except Exception as e:
         st.error(f"Cannot display image: {e}")
 
-# --- User inputs ---
-lat = st.number_input("Latitude (N)", value=0.0, format="%.6f", step=0.000001)
-lon = st.number_input("Longitude (E)", value=0.0, format="%.6f", step=0.000001)
+# --- User inputs as text to allow 0 after decimal ---
+lat_str = st.text_input("Latitude (N)", value="0.0")
+lon_str = st.text_input("Longitude (E)", value="0.0")
 width_m = st.number_input("Plot width (m)", value=10.0)
 height_m = st.number_input("Plot height (m)", value=12.0)
+
+# --- Convert inputs to float ---
+try:
+    lat = float(lat_str)
+except:
+    lat = 0.0
+try:
+    lon = float(lon_str)
+except:
+    lon = 0.0
 
 # --- Load model ---
 try:
@@ -53,7 +65,6 @@ if st.button("Predict AGB"):
         st.error("Model not loaded")
     else:
         try:
-            # --- Compute bands and indices ---
             bands_dict, indices_dict = compute_bands_and_indices(raster_path, lat, lon, width_m, height_m)
 
             # Bands table (vertical)
