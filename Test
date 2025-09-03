@@ -1,37 +1,6 @@
-import rasterio
-from rasterstats import zonal_stats
-from shapely.geometry import box
-import geopandas as gpd
-from pyproj import Transformer
+raster_file = "IMAGERY.TIF"
+lat, lon = 18.11302, 99.31819
+width, height = 10, 12
 
-def get_mean_bands(raster_path, lat, lon, width_m=10, height_m=12):
-    """
-    คืนค่าเฉลี่ยของทุก bands ใน plot ขนาด width_m x height_m รอบพิกัด (lat, lon)
-    """
-    # 1. เปิด raster
-    with rasterio.open(raster_path) as src:
-        raster_crs = src.crs
-
-    # 2. แปลง lat/lon -> CRS ของ raster
-    transformer = Transformer.from_crs("EPSG:4326", raster_crs, always_xy=True)
-    x_center, y_center = transformer.transform(lon, lat)
-
-    # 3. สร้าง polygon ของ plot
-    half_w, half_h = width_m/2, height_m/2
-    xmin, xmax = x_center - half_w, x_center + half_w
-    ymin, ymax = y_center - half_h, y_center + half_h
-    plot_poly = box(xmin, ymin, xmax, ymax)
-    gdf = gpd.GeoDataFrame({"id":[1]}, geometry=[plot_poly], crs=raster_crs)
-
-    # 4. ใช้ zonal_stats คำนวณค่าเฉลี่ยทุก bands
-    stats = zonal_stats(gdf, raster_path, stats=["mean"], nodata=0)
-
-    # 5. จัดผลลัพธ์เป็น dictionary: Band_1, Band_2,...
-    mean_bands = {}
-    if stats and "mean_1" in stats[0]:
-        for key, val in stats[0].items():
-            if key.startswith("mean_"):
-                band_num = key.split("_")[1]
-                mean_bands[f"Band_{band_num}"] = val
-
-    return mean_bands
+bands_avg = get_mean_bands(raster_file, lat, lon, width, height)
+print("Mean bands in plot:", bands_avg)
