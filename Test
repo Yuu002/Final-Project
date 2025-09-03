@@ -1,10 +1,29 @@
-print("Pixel indices row:", row_min, "-", row_max)
-print("Pixel indices col:", col_min, "-", col_max)
+from pyproj import Transformer
 
-pixels_crop = bands[:, row_min:row_max, col_min:col_max]
-print("Cropped shape:", pixels_crop.shape)
+# สมมติภาพ EPSG:32647
+transformer = Transformer.from_crs("EPSG:4326", "EPSG:32647", always_xy=True)
+x_center, y_center = transformer.transform(lon, lat)
 
-row_min = max(0, row_min)
-row_max = min(src.height, row_max)
-col_min = max(0, col_min)
-col_max = min(src.width, col_max)
+import rasterio
+
+with rasterio.open(raster_path) as src:
+    res_x, res_y = src.res  # ความละเอียด pixel
+    x0, y0 = src.bounds.left, src.bounds.top  # origin
+    # UTM -> Pixel index
+    col_center = int((x_center - x0) / res_x)
+    row_center = int((y0 - y_center) / abs(res_y))
+
+width_m, height_m = 10, 12  # ขนาดแปลง
+half_width_px = int(width_m / res_x / 2)
+half_height_px = int(height_m / abs(res_y) / 2)
+
+row_min = max(0, row_center - half_height_px)
+row_max = min(src.height, row_center + half_height_px)
+col_min = max(0, col_center - half_width_px)
+col_max = min(src.width, col_center + half_width_px)
+
+with rasterio.open(raster_path) as src:
+    bands_data = src.read([1,2,3,4])  # B, G, R, NIR
+    crop = bands_data[:, row_min:row_max, col_min:col_max]
+    mean_vals = crop.reshape(4, -1).mean(axis=1)
+    print("Mean values (B,G,R,NIR):", mean_vals)
