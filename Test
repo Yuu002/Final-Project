@@ -1,29 +1,71 @@
-from pyproj import Transformer
-
-# สมมติภาพ EPSG:32647
-transformer = Transformer.from_crs("EPSG:4326", "EPSG:32647", always_xy=True)
-x_center, y_center = transformer.transform(lon, lat)
-
 import rasterio
+import numpy as np
+from pyproj import Transformer
+from scipy.ndimage import map_coordinates
 
+# --- 1. กรอกข้อมูล ---
+lat = 18.11302
+lon = 99.31819
+width_m = 10  # ความกว้าง plot
+height_m = 12  # ความยาว plot
+
+raster_path = "IMAGERY.TIF"
+
+# --- 2. โหลด raster ---
 with rasterio.open(raster_path) as src:
-    res_x, res_y = src.res  # ความละเอียด pixel
-    x0, y0 = src.bounds.left, src.bounds.top  # origin
-    # UTM -> Pixel index
-    col_center = int((x_center - x0) / res_x)
-    row_center = int((y0 - y_center) / abs(res_y))
+    bands = np.stack([src.read(i+1) for i in range(src.count)])  # shape: (bands, height, width)
+    transform = src.transform
+    crs = src.crs
+    res_x, res_y = src.res
 
-width_m, height_m = 10, 12  # ขนาดแปลง
-half_width_px = int(width_m / res_x / 2)
-half_height_px = int(height_m / abs(res_y) / 2)
+# --- 3. แปลง lat/lon -> pixel coordinates ---
+transformer = Transformer.from_crs("EPSG:4326", crs, always_xy=True)
+x, y = transformer.transform(lon, lat)
+col = (x - transform.c) / transform.a
+row = (y - transform.f) / transform.e  # negative resolution in y
 
-row_min = max(0, row_center - half_height_px)
-row_max = min(src.height, row_center + half_height_px)
-col_min = max(0, col_center - half_width_px)
-col_max = min(src.width, col_center + half_width_px)
+# --- 4. Subpixel grid สำหรับ plot ---
+half_w_px = width_m / 2 / res_x
+half_h_px = height_m / 2 / abs(res_y)
 
-with rasterio.open(raster_path) as src:
-    bands_data = src.read([1,2,3,4])  # B, G, R, NIR
-    crop = bands_data[:, row_min:row_max, col_min:col_max]
-    mean_vals = crop.reshape(4, -1).mean(axis=1)
-    print("Mean values (B,G,R,NIR):", mean_vals)
+# สร้าง grid 3x3 pixel รอบจุด center
+rows = np.linspace(row - half_h_px, row + half_h_px, num=3)
+cols = np.linspace(col - half_w_px, col + half_w_px, num=3)
+grid_r, grid_c = np.meshgrid(rows, cols, indexing='ij')
+coords = np.array([grid_r.flatten(), grid_c.flatten()])
+
+# --- 5. คำนวณค่าเฉลี่ย bands ในพื้นที่ plot ---
+mean_vals = {}
+band_names = ['Blue', 'Green', 'Red', 'NIR']
+for i, bname in enumerate(band_names):
+    vals = map_coordinates(bands[i], coords, order=1)  # bilinear
+    mean_vals[bname] = vals.mean()
+
+print("Mean bands (subpixel approx):")
+print(mean_vals)
+
+# --- 6. คำนวณดัชนี 5 ตัว ---
+B = mean_vals['Blue']
+G = mean_vals['Green']
+R = mean_vals['Red']
+NIR = mean_vals['NIR']
+L = 0.5
+
+NDVI = (NIR - R) / (NIR + R + 1e-6)
+TNDVI = np.sqrt(NDVI + L)
+SR = NIR / (R + 1e-6)
+SAVI = ((1 + L) * (NIR - R)) / (NIR + R + L)
+MSAVI2 = (2*NIR + 1 - np.sqrt((2*NIR + 1)**2 - 8*(NIR - R))) / 2
+
+indices = {"NDVI": NDVI, "TNDVI": TNDVI, "SR": SR, "SAVI": SAVI, "MSAVI2": MSAVI2}
+print("Vegetation indices:")
+print(indices)
+
+# --- 7. ใส่ model prediction ---
+import joblib
+model = joblib.load("svr_agb_model.pkl")
+
+feature_order = ["NDVI", "TNDVI", "SR", "SAVI", "MSAVI2"]
+X = [indices[f] for f in feature_order]
+agb_pred = model.predict([X])[0]
+print(f"Predicted AGB (ton/ha): {agb_pred:.3f}")
