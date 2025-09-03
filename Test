@@ -1,103 +1,37 @@
 import rasterio
-import geopandas as gpd
+from rasterstats import zonal_stats
 from shapely.geometry import box
 from pyproj import Transformer
-from rasterstats import zonal_stats
-import numpy as np
+import geopandas as gpd
 
-# -----------------------------
-# กำหนดอินพุต
-# -----------------------------
-raster_path = "IMAGERY.TIF"   # ไฟล์ภาพของคุณ (THEOS1)
-lat = 18.11302
-lon = 99.31819
-width_m = 10    # ความกว้างแปลง (เมตร)
-height_m = 12   # ความยาวแปลง (เมตร)
+# --- พิกัดกลางและขนาดแปลง ---
+lat, lon = 18.11302, 99.31819
+width_m, height_m = 10, 12
 
-# หากพื้นที่เล็กกว่าความละเอียดภาพ ระบบจะลอง "ขยายรอบแปลง" ตามสเกลเหล่านี้ (หน่วย = เมตร)
-buffer_scales = [0, 0.5, 1.0, 1.5, 2.0, 3.0]  # 0 = ไม่ขยาย ใช้เฉพาะแปลงจริงก่อน
+# --- แปลง lat/lon -> UTM (ตรงกับ CRS ภาพ) ---
+transformer = Transformer.from_crs("EPSG:4326", "EPSG:32647", always_xy=True)
+x_center, y_center = transformer.transform(lon, lat)
 
-def extract_means_from_props(props: dict):
-    """รองรับทั้งกรณี zonal_stats ให้ 'mean' (บัณฑิตเดียว) หรือ 'mean_1','mean_2',... สำหรับหลายบัณฑิต"""
-    means = {}
-    # รวบคีย์ที่ขึ้นต้น mean
-    mean_items = [(k, v) for k, v in props.items() if k.startswith("mean")]
-    if not mean_items:
-        return means
-    for k, v in mean_items:
-        if k == "mean":
-            idx = 1
-        else:
-            try:
-                idx = int(k.split("_")[1])
-            except Exception:
-                idx = 1
-        means[f"Band_{idx}"] = None if v is None else float(v)
-    # เรียงตามลำดับแบนด์
-    means = dict(sorted(means.items(), key=lambda kv: int(kv[0].split("_")[1])))
-    return means
+# --- สร้าง polygon ครอบแปลง ---
+half_w, half_h = width_m / 2, height_m / 2
+plot_poly = box(x_center - half_w, y_center - half_h,
+                x_center + half_w, y_center + half_h)
 
-with rasterio.open(raster_path) as src:
-    raster_crs = src.crs
-    res_x, res_y = src.res  # ขนาดพิกเซล (เมตร/พิกเซล)
-    px_size = max(abs(res_x), abs(res_y))
+gdf = gpd.GeoDataFrame({"id":[1]}, geometry=[plot_poly], crs="EPSG:32647")
 
-    # 1) แปลงพิกัด WGS84 → CRS ของภาพ
-    if str(raster_crs).upper() != "EPSG:4326":
-        transformer = Transformer.from_crs("EPSG:4326", raster_crs, always_xy=True)
-        x_center, y_center = transformer.transform(lon, lat)
-    else:
-        x_center, y_center = lon, lat
+# --- โหลดภาพและดึงค่าเฉลี่ยรอบแปลง ---
+raster_path = "IMAGERY.TIF"
+stats = zonal_stats(gdf, raster_path, stats=["mean"], geojson_out=True, nodata=0)
 
-    # 2) สร้างสี่เหลี่ยมแปลงตามขนาดจริง (เมตร) ใน CRS ของภาพ
-    half_w, half_h = width_m / 2.0, height_m / 2.0
-    base_poly = box(x_center - half_w, y_center - half_h,
-                    x_center + half_w, y_center + half_h)
+# --- เก็บค่าเฉลี่ย 4 bands ---
+band_means = {}
+if stats:
+    props = stats[0]["properties"]
+    band_means["Blue"] = props.get("mean_1")
+    band_means["Green"] = props.get("mean_2")
+    band_means["Red"] = props.get("mean_3")
+    band_means["NIR"] = props.get("mean_4")
 
-    # 3) ลองคำนวณเฉลี่ยในแปลงจริงก่อน ถ้าเล็กเกินจะค่อยๆ buffer เพิ่ม
-    means_result = None
-    used_geom_desc = None
-
-    for scale in buffer_scales:
-        if scale == 0:
-            geom = base_poly
-            used_geom_desc = f"{width_m}m × {height_m}m (no buffer)"
-        else:
-            # ขยายรอบแปลงด้วยระยะ = scale * ขนาดพิกเซลสูงสุด
-            buf_m = scale * px_size
-            geom = base_poly.buffer(buf_m)
-            used_geom_desc = f"{width_m}m × {height_m}m + buffer {buf_m:.1f} m"
-
-        gdf = gpd.GeoDataFrame({"id":[1]}, geometry=[geom], crs=raster_crs)
-
-        # ใช้ all_touched=True เพื่อให้พิกเซลที่โดนขอบ polygon ก็นับร่วมด้วย
-        stats = zonal_stats(
-            gdf,
-            raster_path,
-            stats=["mean"],
-            all_touched=True,
-            nodata=None,      # หากไฟล์มี nodata ใน metadata จะถูกใช้เอง
-            geojson_out=True
-        )
-
-        if not stats:
-            continue
-
-        props = stats[0].get("properties", {})
-        means = extract_means_from_props(props)
-
-        # ตรวจว่ามีค่า mean จริงไหม (ไม่นับกรณีทุกแบนด์เป็น None)
-        if means and any(v is not None for v in means.values()):
-            means_result = means
-            break
-
-# 4) แสดงผล
-if means_result is None:
-    print("❌ ไม่สามารถคำนวณค่าเฉลี่ยได้ (พื้นที่เล็กเกิน/อยู่นอกภาพ/เป็น nodata ทั้งหมด)")
-else:
-    print(f"📍 พิกัด WGS84 ที่ใช้: lat={lat}, lon={lon}")
-    print(f"🗺️  ภาพ CRS: {raster_crs}, pixel ~ {abs(res_x)}×{abs(res_y)} m")
-    print(f"📦 พื้นที่ที่ใช้คำนวณ: {used_geom_desc}")
-    print("📊 ค่าเฉลี่ยแต่ละแบนด์ (เฉลี่ยรอบๆ แปลง):")
-    for k, v in means_result.items():
-        print(f"  - {k}: {v:.4f}" if v is not None else f"  - {k}: None")
+print("📊 ค่าเฉลี่ยรอบแปลง (10x12 m):")
+for k, v in band_means.items():
+    print(f"{k}: {v:.4f}" if v is not None else f"{k}: None")
