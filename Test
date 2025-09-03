@@ -1,76 +1,71 @@
-# bands_indices.py
-import rasterio
-import numpy as np
-from pyproj import Transformer
+# app.py
+import streamlit as st
+import pandas as pd
+import joblib
+import tempfile
+from bands_indices import compute_bands_and_indices
 
-def compute_bands_and_indices(raster_path, lat, lon, width_m=10, height_m=12):
-    """
-    - raster_path: path to TIFF image
-    - lat, lon: center coordinate (WGS84)
-    - width_m, height_m: size of plot in meters
-    Returns:
-        bands_dict: dict of mean values of Blue, Green, Red, NIR
-        indices_dict: dict of NDVI, TNDVI, SR, SAVI, MSAVI2
-    """
-    # --- Open raster ---
-    with rasterio.open(raster_path) as src:
-        crs = src.crs
-        transform = src.transform
-        res_x, res_y = src.res
-        data = src.read([1,2,3,4])  # Blue, Green, Red, NIR
-        nodata = src.nodata
+st.set_page_config(page_title="AGB Predictor", layout="centered")
+st.title("🌿 AGB Prediction from Satellite Image")
 
-    # --- Transform lat/lon to raster CRS ---
-    transformer = Transformer.from_crs("EPSG:4326", crs, always_xy=True)
-    x_center, y_center = transformer.transform(lon, lat)
+# --- Upload raster ---
+uploaded_file = st.file_uploader("Upload Satellite Image (TIFF)", type=["tif","tiff"])
+raster_path = None
+if uploaded_file is not None:
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".tif") as tmp_file:
+        tmp_file.write(uploaded_file.read())
+        raster_path = tmp_file.name
 
-    # --- Convert meters to pixels ---
-    col_center, row_center = ~transform * (x_center, y_center)
-    col_center = int(round(col_center))
-    row_center = int(round(row_center))
-    half_w_px = int(round(width_m / res_x / 2))
-    half_h_px = int(round(height_m / abs(res_y) / 2))
+# --- User inputs as text to allow 0 after decimal ---
+lat_str = st.text_input("Latitude (N)", value="0.0")
+lon_str = st.text_input("Longitude (E)", value="0.0")
+width_m = st.number_input("Plot width (m)", value=10.0)
+height_m = st.number_input("Plot height (m)", value=12.0)
 
-    # --- Define window ---
-    row_start = max(0, row_center - half_h_px)
-    row_end = min(data.shape[1], row_center + half_h_px)
-    col_start = max(0, col_center - half_w_px)
-    col_end = min(data.shape[2], col_center + half_w_px)
+# --- Convert inputs to float ---
+try:
+    lat = float(lat_str)
+except:
+    lat = 0.0
+try:
+    lon = float(lon_str)
+except:
+    lon = 0.0
 
-    window = data[:, row_start:row_end, col_start:col_end]
+# --- Load model ---
+try:
+    model = joblib.load("svr_agb_model.pkl")
+except:
+    st.error("Cannot load model svr_agb_model.pkl")
+    model = None
 
-    # --- Compute mean per band ---
-    bands_dict = {}
-    band_names = ["Blue", "Green", "Red", "NIR"]
-    for i, name in enumerate(band_names):
-        band_data = window[i]
-        if nodata is not None:
-            band_data = band_data[band_data != nodata]
-        if band_data.size == 0:
-            mean_val = np.nan
-        else:
-            mean_val = float(np.mean(band_data))
-        bands_dict[name] = mean_val
+# --- Predict button ---
+if st.button("Predict AGB"):
+    if raster_path is None:
+        st.error("Please upload a raster image first")
+    elif model is None:
+        st.error("Model not loaded")
+    else:
+        try:
+            bands_dict, indices_dict = compute_bands_and_indices(raster_path, lat, lon, width_m, height_m)
 
-    # --- Compute indices (NDVI, TNDVI, SR, SAVI, MSAVI2) ---
-    R = bands_dict["Red"]
-    NIR = bands_dict["NIR"]
-    L = 0.5
+            # Bands table (vertical)
+            st.subheader("📊 Bands (automatic)")
+            bands_df = pd.DataFrame(list(bands_dict.items()), columns=["Band", "Mean Value"])
+            st.table(bands_df)
 
-    # Avoid nan/divide issues
-    epsilon = 1e-6
-    NDVI = (NIR - R) / (NIR + R + epsilon)
-    TNDVI = np.sqrt(NDVI + L)
-    SR = NIR / (R + epsilon)
-    SAVI = ((1+L)*(NIR - R)) / (NIR + R + L + epsilon)
-    MSAVI2 = (2*NIR + 1 - np.sqrt((2*NIR +1)**2 - 8*(NIR - R))) / 2
+            # Indices table (vertical)
+            st.subheader("📈 Vegetation Indices")
+            indices_df = pd.DataFrame(list(indices_dict.items()), columns=["Index", "Value"])
+            st.table(indices_df)
 
-    indices_dict = {
-        "NDVI": NDVI,
-        "TNDVI": TNDVI,
-        "SR": SR,
-        "SAVI": SAVI,
-        "MSAVI2": MSAVI2
-    }
+            # Predict AGB
+            feature_order = ["NDVI","TNDVI","SR","SAVI","MSAVI2"]
+            X = [indices_dict[f] for f in feature_order]
+            agb_pred = model.predict([X])[0]
 
-    return bands_dict, indices_dict
+            st.subheader("🌱 Predicted AGB (ton/ha)")
+            st.markdown(f"<h2 style='color:green;font-size:30px;'>{agb_pred:.3f}</h2>", unsafe_allow_html=True)
+
+        except Exception as e:
+            st.error(f"Error computing bands/indices: {e}")
