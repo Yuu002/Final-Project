@@ -1,71 +1,37 @@
 import rasterio
-import numpy as np
+from rasterstats import zonal_stats
+from shapely.geometry import box
+import geopandas as gpd
 from pyproj import Transformer
-from scipy.ndimage import map_coordinates
 
-# --- 1. กรอกข้อมูล ---
-lat = 18.11302
-lon = 99.31819
-width_m = 10  # ความกว้าง plot
-height_m = 12  # ความยาว plot
+def get_mean_bands(raster_path, lat, lon, width_m=10, height_m=12):
+    """
+    คืนค่าเฉลี่ยของทุก bands ใน plot ขนาด width_m x height_m รอบพิกัด (lat, lon)
+    """
+    # 1. เปิด raster
+    with rasterio.open(raster_path) as src:
+        raster_crs = src.crs
 
-raster_path = "IMAGERY.TIF"
+    # 2. แปลง lat/lon -> CRS ของ raster
+    transformer = Transformer.from_crs("EPSG:4326", raster_crs, always_xy=True)
+    x_center, y_center = transformer.transform(lon, lat)
 
-# --- 2. โหลด raster ---
-with rasterio.open(raster_path) as src:
-    bands = np.stack([src.read(i+1) for i in range(src.count)])  # shape: (bands, height, width)
-    transform = src.transform
-    crs = src.crs
-    res_x, res_y = src.res
+    # 3. สร้าง polygon ของ plot
+    half_w, half_h = width_m/2, height_m/2
+    xmin, xmax = x_center - half_w, x_center + half_w
+    ymin, ymax = y_center - half_h, y_center + half_h
+    plot_poly = box(xmin, ymin, xmax, ymax)
+    gdf = gpd.GeoDataFrame({"id":[1]}, geometry=[plot_poly], crs=raster_crs)
 
-# --- 3. แปลง lat/lon -> pixel coordinates ---
-transformer = Transformer.from_crs("EPSG:4326", crs, always_xy=True)
-x, y = transformer.transform(lon, lat)
-col = (x - transform.c) / transform.a
-row = (y - transform.f) / transform.e  # negative resolution in y
+    # 4. ใช้ zonal_stats คำนวณค่าเฉลี่ยทุก bands
+    stats = zonal_stats(gdf, raster_path, stats=["mean"], nodata=0)
 
-# --- 4. Subpixel grid สำหรับ plot ---
-half_w_px = width_m / 2 / res_x
-half_h_px = height_m / 2 / abs(res_y)
+    # 5. จัดผลลัพธ์เป็น dictionary: Band_1, Band_2,...
+    mean_bands = {}
+    if stats and "mean_1" in stats[0]:
+        for key, val in stats[0].items():
+            if key.startswith("mean_"):
+                band_num = key.split("_")[1]
+                mean_bands[f"Band_{band_num}"] = val
 
-# สร้าง grid 3x3 pixel รอบจุด center
-rows = np.linspace(row - half_h_px, row + half_h_px, num=3)
-cols = np.linspace(col - half_w_px, col + half_w_px, num=3)
-grid_r, grid_c = np.meshgrid(rows, cols, indexing='ij')
-coords = np.array([grid_r.flatten(), grid_c.flatten()])
-
-# --- 5. คำนวณค่าเฉลี่ย bands ในพื้นที่ plot ---
-mean_vals = {}
-band_names = ['Blue', 'Green', 'Red', 'NIR']
-for i, bname in enumerate(band_names):
-    vals = map_coordinates(bands[i], coords, order=1)  # bilinear
-    mean_vals[bname] = vals.mean()
-
-print("Mean bands (subpixel approx):")
-print(mean_vals)
-
-# --- 6. คำนวณดัชนี 5 ตัว ---
-B = mean_vals['Blue']
-G = mean_vals['Green']
-R = mean_vals['Red']
-NIR = mean_vals['NIR']
-L = 0.5
-
-NDVI = (NIR - R) / (NIR + R + 1e-6)
-TNDVI = np.sqrt(NDVI + L)
-SR = NIR / (R + 1e-6)
-SAVI = ((1 + L) * (NIR - R)) / (NIR + R + L)
-MSAVI2 = (2*NIR + 1 - np.sqrt((2*NIR + 1)**2 - 8*(NIR - R))) / 2
-
-indices = {"NDVI": NDVI, "TNDVI": TNDVI, "SR": SR, "SAVI": SAVI, "MSAVI2": MSAVI2}
-print("Vegetation indices:")
-print(indices)
-
-# --- 7. ใส่ model prediction ---
-import joblib
-model = joblib.load("svr_agb_model.pkl")
-
-feature_order = ["NDVI", "TNDVI", "SR", "SAVI", "MSAVI2"]
-X = [indices[f] for f in feature_order]
-agb_pred = model.predict([X])[0]
-print(f"Predicted AGB (ton/ha): {agb_pred:.3f}")
+    return mean_bands
