@@ -112,4 +112,5 @@ with col_right:
                 st.markdown(f"<h2 style='color:green;font-size:30px;'>{agb_pred:.3f}</h2>", unsafe_allow_html=True)
 
             except Exception as e:
+
                 st.error(f"Error computing bands/indices: {e}")
