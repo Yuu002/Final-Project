@@ -96,7 +96,7 @@ with col_right:
                 bands_dict, indices_dict = compute_bands_and_indices(raster_path, lat, lon, width_m, height_m)
 
                 # Bands table
-                st.subheader("📊 Bands (automatic)")
+                st.subheader("📊 Bands")
                 bands_df = pd.DataFrame(list(bands_dict.items()), columns=["Band", "Mean Value"])
                 st.table(bands_df)
 
@@ -115,3 +115,4 @@ with col_right:
 
             except Exception as e:
                 st.error(f"Error computing bands/indices: {e}")
+
