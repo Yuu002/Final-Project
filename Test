@@ -1,3 +1,31 @@
-	1.	ค่าดัชนีพืชพรรณที่คำนวณจากภาพถ่ายดาวเทียมสามารถใช้ทำนายมวลชีวภาพเหนือพื้นดินได้อย่างแม่นยำ
-	2.	การใช้แบบจำลองการเรียนรู้ของเครื่องให้ผลการทำนายมวลชีวภาพเหนือพื้นดินดีกว่าแบบจำลองทางสถิติพื้นฐาน
-	3.	การรวมหลายดัชนีพืชพรรณเข้าด้วยกันช่วยเพิ่มความแม่นยำในการทำนายมากกว่าการใช้ดัชนีเพียงตัวเดียว
+	import rasterio
+from pyproj import Transformer
+
+# สมมติพิกัดที่คุณให้มา
+lat, lon = 18.11302, 99.31819
+
+# เปิดไฟล์ THEOS (band ใดก็ได้เพื่อใช้ transform)
+theos_path = "THEOS_band_red.tif"
+with rasterio.open(theos_path) as src:
+    # ตรวจสอบ CRS ของไฟล์ (เช่น UTM)
+    print("Image CRS:", src.crs)
+    
+    # สร้างตัวแปลงพิกัด (จาก EPSG:4326 -> CRS ของภาพ)
+    transformer = Transformer.from_crs("EPSG:4326", src.crs, always_xy=True)
+    x, y = transformer.transform(lon, lat)
+    print("Coordinate in image CRS:", x, y)
+    
+    # หาตำแหน่ง pixel (row, col)
+    row, col = src.index(x, y)
+    print("Pixel location:", row, col)
+    
+    # สมมติว่าความละเอียด spatial ของภาพ ~4 m (multispectral THEOS)
+    # ถ้าอยากได้ patch 10x12 m → คิดเป็นประมาณ 3x3 pixel
+    half_size = 2  # pixel radius
+    window = rasterio.windows.Window(col - half_size, row - half_size,
+                                     2*half_size+1, 2*half_size+1)
+    
+    # อ่านค่า band ใน window
+    patch = src.read(1, window=window)
+    print("Patch shape:", patch.shape)
+    print("Mean reflectance value:", patch.mean())
