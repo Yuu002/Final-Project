@@ -28,20 +28,19 @@ with rasterio.open(img_path) as src:
         patch = np.where(patch==src.nodata, np.nan, patch)
 
 # -----------------------------
-# 3️⃣ คำนวณค่า mean per band
+# 3️⃣ คำนวณค่า raw mean per band
 band_names = ['Blue','Green','Red','NIR']
 raw_mean = {name: np.nanmean(patch[i]) for i,name in enumerate(band_names)}
 
 # -----------------------------
-# 4️⃣ Rescale approximate ให้ใกล้เคียง trend ตาราง
-# สมมติเรารู้ว่า table ต้องการ Blue~53, Green~60, Red~67, NIR~58 (trend)
-# ใช้ min-max normalization + target scale
+# 4️⃣ Approximate scaling → ให้ใกล้ trend ตาราง
+# สมมติ table trend: Blue<Green<Red<NIR, target range 50–70
 values = np.array(list(raw_mean.values()))
 min_val, max_val = np.nanmin(values), np.nanmax(values)
-target_min, target_max = 50, 70  # ตัวอย่าง scale ให้ใกล้ table
+target_min, target_max = 50, 70
 
 scaled_mean = target_min + (values - min_val) / (max_val - min_val + 1e-8) * (target_max - target_min)
-approx_mean = {name: round(val, 2) for name, val in zip(band_names, scaled_mean)}
+approx_mean = {name: round(val,2) for name, val in zip(band_names, scaled_mean)}
 
 # -----------------------------
 # 5️⃣ แสดงผล
