@@ -1,5 +1,5 @@
 import rasterio
-from rasterio.windows import from_bounds
+from rasterio.windows import Window
 from pyproj import Transformer
 import numpy as np
 
@@ -21,6 +21,7 @@ with rasterio.open(img_path) as src:
     
     window = from_bounds(xmin, ymin, xmax, ymax, transform=src.transform)
     patch = src.read(window=window).astype("float32")  # (bands,H,W)
+    
     if src.nodata is not None:
         patch = np.where(patch==src.nodata, np.nan, patch)
 
@@ -47,30 +48,11 @@ for i in range(n_rows):
         
         # mean per band
         mean_bands = {name: np.nanmean(sub_patch[b]) for b,name in enumerate(band_names)}
-        
-        # vegetation indices
-        blue, green, red, nir = sub_patch
-        ndvi = (nir - red) / (nir + red + 1e-8)
-        tndvi = (ndvi - np.nanmin(ndvi)) / (np.nanmax(ndvi) - np.nanmin(ndvi) + 1e-8)
-        sr = nir / (red + 1e-8)
-        L = 0.5
-        savi = ((nir - red)/(nir + red + L))*(1+L)
-        masvi2 = (nir - red)/(nir + red - blue + 1e-8)
-        
-        indices = {
-            'NDVI': np.nanmean(ndvi),
-            'TNDVI': np.nanmean(tndvi),
-            'SR': np.nanmean(sr),
-            'SAVI': np.nanmean(savi),
-            'MASVI2': np.nanmean(masvi2)
-        }
-        
-        subplot_stats.append({'row':i,'col':j,'mean_bands':mean_bands,'indices':indices})
+        subplot_stats.append({'row':i,'col':j,'mean_bands':mean_bands})
 
 # -----------------------------
 # 5️⃣ แสดงผล
 for stat in subplot_stats:
     print(f"Subplot (row {stat['row']}, col {stat['col']}):")
     print("  Mean Bands:", stat['mean_bands'])
-    print("  Vegetation Indices:", stat['indices'])
     print()
