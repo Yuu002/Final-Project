@@ -1,39 +1,31 @@
 import rasterio
-from rasterio.windows import from_bounds
-from pyproj import Transformer
+from rasterio.mask import mask
+import geopandas as gpd
 import numpy as np
 
-# -----------------------------
-# 1️⃣ พิกัดและ patch size
-lat, lon = 18.11302, 99.31819
-width_m, height_m = 12, 10
+# --- THEOS-1 multiband image
 img_path = "THEOS_multiband.tif"
 
-# -----------------------------
-# 2️⃣ ดึง patch
+# --- Shapefile ของแปลง (Polygon)
+shp_path = "plots.shp"
+plots = gpd.read_file(shp_path)
+
+# --- เปิดภาพ
 with rasterio.open(img_path) as src:
-    transformer = Transformer.from_crs("EPSG:4326", src.crs, always_xy=True)
-    x, y = transformer.transform(lon, lat)
+    mean_per_plot = []
     
-    half_w, half_h = width_m/2, height_m/2
-    xmin, xmax = x-half_w, x+half_w
-    ymin, ymax = y-half_h, y+half_h
-    
-    window = from_bounds(xmin, ymin, xmax, ymax, transform=src.transform)
-    patch = src.read(window=window).astype("float32")  # (bands,H,W)
-    
-    nodata_val = src.nodata
-    if nodata_val is not None:
-        patch = np.where(patch==nodata_val, np.nan, patch)
+    for idx, plot in plots.iterrows():
+        geometry = [plot['geometry']]  # ต้องเป็น list ของ shapely geometry
+        
+        # mask ภาพให้เหลือเฉพาะพื้นที่ Polygon
+        out_image, out_transform = mask(src, geometry, crop=True, nodata=np.nan)
+        # out_image.shape = (bands, H, W)
+        
+        # คำนวณ mean per band
+        band_names = ['Blue','Green','Red','NIR']
+        mean_bands = {name: np.nanmean(out_image[i]) for i,name in enumerate(band_names)}
+        mean_per_plot.append({'plot_id': plot['id'], 'mean_bands': mean_bands})
 
-# -----------------------------
-# 3️⃣ คำนวณค่าเฉลี่ยแต่ละ band (ทั้ง patch)
-band_names = ['Blue','Green','Red','NIR']
-mean_bands = {}
-for b, name in enumerate(band_names):
-    valid_pixels = patch[b][~np.isnan(patch[b])]
-    mean_bands[name] = np.mean(valid_pixels) if valid_pixels.size > 0 else None
-
-# -----------------------------
-# 4️⃣ แสดงผล
-print("Mean value per band in 10x12m patch:", mean_bands)
+# --- แสดงผล
+for stat in mean_per_plot:
+    print(f"Plot {stat['plot_id']}: {stat['mean_bands']}")
