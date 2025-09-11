@@ -1,5 +1,5 @@
 import rasterio
-from rasterio.windows import Window
+from rasterio.windows import from_bounds
 from pyproj import Transformer
 import numpy as np
 
@@ -27,39 +27,13 @@ with rasterio.open(img_path) as src:
         patch = np.where(patch==nodata_val, np.nan, patch)
 
 # -----------------------------
-# 3️⃣ แบ่ง patch เป็น subplots (เช่น 3x3)
-bands, H, W = patch.shape
-n_rows, n_cols = 3, 3
-row_step = H // n_rows
-col_step = W // n_cols
-
+# 3️⃣ คำนวณค่าเฉลี่ยแต่ละ band (ทั้ง patch)
 band_names = ['Blue','Green','Red','NIR']
+mean_bands = {}
+for b, name in enumerate(band_names):
+    valid_pixels = patch[b][~np.isnan(patch[b])]
+    mean_bands[name] = np.mean(valid_pixels) if valid_pixels.size > 0 else None
 
 # -----------------------------
-# 4️⃣ Loop over subplots
-subplot_stats = []
-for i in range(n_rows):
-    for j in range(n_cols):
-        r_start = i*row_step
-        r_end   = (i+1)*row_step if i<n_rows-1 else H
-        c_start = j*col_step
-        c_end   = (j+1)*col_step if j<n_cols-1 else W
-        
-        sub_patch = patch[:, r_start:r_end, c_start:c_end]
-        
-        # mean per band — เฉพาะ pixel valid (ไม่ใช่ nan)
-        mean_bands = {}
-        for b, name in enumerate(band_names):
-            valid_pixels = sub_patch[b][~np.isnan(sub_patch[b])]
-            if valid_pixels.size > 0:
-                mean_bands[name] = np.mean(valid_pixels)
-            else:
-                mean_bands[name] = None  # ไม่มี pixel valid
-        subplot_stats.append({'row':i,'col':j,'mean_bands':mean_bands})
-
-# -----------------------------
-# 5️⃣ แสดงผล
-for stat in subplot_stats:
-    print(f"Subplot (row {stat['row']}, col {stat['col']}):")
-    print("  Mean Bands:", stat['mean_bands'])
-    print()
+# 4️⃣ แสดงผล
+print("Mean value per band in 10x12m patch:", mean_bands)
