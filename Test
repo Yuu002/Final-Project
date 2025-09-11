@@ -4,38 +4,39 @@ from pyproj import Transformer
 import numpy as np
 
 # -----------------------------
-# พิกัดแปลง
+# 1️⃣ พิกัดแปลง
 lat, lon = 18.11302, 99.31819
 width_m, height_m = 12, 10  # ขนาดแปลง
 
-# path ไปยังภาพ THEOS-1
 img_path = "THEOS_multiband.tif"
 
 # -----------------------------
-# เปิดภาพและดึง patch ของแปลง
+# 2️⃣ เปิดภาพและดึง patch
 with rasterio.open(img_path) as src:
-    # แปลง lat/lon → CRS ของภาพ
     transformer = Transformer.from_crs("EPSG:4326", src.crs, always_xy=True)
     x, y = transformer.transform(lon, lat)
     
-    # ขอบเขตของ patch (bounding box)
     half_w, half_h = width_m/2, height_m/2
     xmin, xmax = x-half_w, x+half_w
     ymin, ymax = y-half_h, y+half_h
     
-    # สร้าง window
     window = from_bounds(xmin, ymin, xmax, ymax, transform=src.transform)
-    patch = src.read(window=window).astype("float32")  # shape = (bands,H,W)
+    patch = src.read(window=window).astype("float32")  # (bands,H,W)
     
     # กรอง nodata
     if src.nodata is not None:
         patch = np.where(patch==src.nodata, np.nan, patch)
 
 # -----------------------------
-# คำนวณค่าเฉลี่ยแต่ละ band
-band_names = ['Blue','Green','Red','NIR']
-mean_bands = {name: np.nanmean(patch[i]) for i,name in enumerate(band_names)}
+# 3️⃣ แปลง DN → approximate reflectance / scaled value
+# สมมติ scale factor เพื่อให้ใกล้เคียงค่าตาราง (เช่น 0-255)
+scaled_patch = patch / np.nanmax(patch) * 100  # ตัวอย่าง scale factor 100
 
 # -----------------------------
-# แสดงผล
-print("Mean value per band in 10x12m plot:", mean_bands)
+# 4️⃣ คำนวณค่าเฉลี่ย per band
+band_names = ['Blue','Green','Red','NIR']
+mean_bands = {name: np.nanmean(scaled_patch[i]) for i,name in enumerate(band_names)}
+
+# -----------------------------
+# 5️⃣ แสดงผล
+print("Approximate mean per band in 10x12m plot:", mean_bands)
