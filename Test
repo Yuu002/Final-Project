@@ -22,8 +22,9 @@ with rasterio.open(img_path) as src:
     window = from_bounds(xmin, ymin, xmax, ymax, transform=src.transform)
     patch = src.read(window=window).astype("float32")  # (bands,H,W)
     
-    if src.nodata is not None:
-        patch = np.where(patch==src.nodata, np.nan, patch)
+    nodata_val = src.nodata
+    if nodata_val is not None:
+        patch = np.where(patch==nodata_val, np.nan, patch)
 
 # -----------------------------
 # 3️⃣ แบ่ง patch เป็น subplots (เช่น 3x3)
@@ -46,8 +47,14 @@ for i in range(n_rows):
         
         sub_patch = patch[:, r_start:r_end, c_start:c_end]
         
-        # mean per band
-        mean_bands = {name: np.nanmean(sub_patch[b]) for b,name in enumerate(band_names)}
+        # mean per band — เฉพาะ pixel valid (ไม่ใช่ nan)
+        mean_bands = {}
+        for b, name in enumerate(band_names):
+            valid_pixels = sub_patch[b][~np.isnan(sub_patch[b])]
+            if valid_pixels.size > 0:
+                mean_bands[name] = np.mean(valid_pixels)
+            else:
+                mean_bands[name] = None  # ไม่มี pixel valid
         subplot_stats.append({'row':i,'col':j,'mean_bands':mean_bands})
 
 # -----------------------------
