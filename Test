@@ -4,42 +4,38 @@ from pyproj import Transformer
 import numpy as np
 
 # -----------------------------
-# 1️⃣ รายการแปลง: [lat, lon, width_m, height_m]
-plots = [
-    {"id": "plot1", "lat":18.11302, "lon":99.31819, "width":12, "height":10},
-    # สามารถเพิ่ม plot อื่นได้
-]
+# พิกัดแปลง
+lat, lon = 18.11302, 99.31819
+width_m, height_m = 12, 10  # ขนาดแปลง
 
+# path ไปยังภาพ THEOS-1
 img_path = "THEOS_multiband.tif"
 
 # -----------------------------
-# 2️⃣ เปิดภาพ
+# เปิดภาพและดึง patch ของแปลง
 with rasterio.open(img_path) as src:
-    results = []
-    for plot in plots:
-        lat, lon, w, h = plot['lat'], plot['lon'], plot['width'], plot['height']
-        
-        transformer = Transformer.from_crs("EPSG:4326", src.crs, always_xy=True)
-        x, y = transformer.transform(lon, lat)
-        
-        half_w, half_h = w/2, h/2
-        xmin, xmax = x-half_w, x+half_w
-        ymin, ymax = y-half_h, y+half_h
-        
-        # crop patch ของ plot
-        window = from_bounds(xmin, ymin, xmax, ymax, transform=src.transform)
-        patch = src.read(window=window).astype("float32")
-        
-        # กรอง nodata
-        if src.nodata is not None:
-            patch = np.where(patch==src.nodata, np.nan, patch)
-        
-        # ค่าเฉลี่ย per band
-        band_names = ['Blue','Green','Red','NIR']
-        mean_bands = {name: np.nanmean(patch[i]) for i,name in enumerate(band_names)}
-        results.append({"plot_id": plot["id"], "mean_bands": mean_bands})
+    # แปลง lat/lon → CRS ของภาพ
+    transformer = Transformer.from_crs("EPSG:4326", src.crs, always_xy=True)
+    x, y = transformer.transform(lon, lat)
+    
+    # ขอบเขตของ patch (bounding box)
+    half_w, half_h = width_m/2, height_m/2
+    xmin, xmax = x-half_w, x+half_w
+    ymin, ymax = y-half_h, y+half_h
+    
+    # สร้าง window
+    window = from_bounds(xmin, ymin, xmax, ymax, transform=src.transform)
+    patch = src.read(window=window).astype("float32")  # shape = (bands,H,W)
+    
+    # กรอง nodata
+    if src.nodata is not None:
+        patch = np.where(patch==src.nodata, np.nan, patch)
 
 # -----------------------------
-# 3️⃣ แสดงผล
-for r in results:
-    print(f"Plot {r['plot_id']}: {r['mean_bands']}")
+# คำนวณค่าเฉลี่ยแต่ละ band
+band_names = ['Blue','Green','Red','NIR']
+mean_bands = {name: np.nanmean(patch[i]) for i,name in enumerate(band_names)}
+
+# -----------------------------
+# แสดงผล
+print("Mean value per band in 10x12m plot:", mean_bands)
