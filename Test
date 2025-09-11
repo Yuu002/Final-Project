@@ -1,81 +1,61 @@
 import rasterio
 from rasterio.windows import from_bounds
 from pyproj import Transformer
-import torch
-import torch.nn as nn
 import numpy as np
 
 # -----------------------------
-# 1️⃣ Define coordinates & patch size
+# 1️⃣ พิกัดและ patch size
 lat, lon = 18.11302, 99.31819
-width_m, height_m = 12, 10  # 10x12 m
+width_m, height_m = 12, 10
 
-# 2️⃣ Path to multiband THEOS image (B,G,R,NIR)
+# 2️⃣ path to multiband THEOS image
 img_path = "THEOS_multiband.tif"
 
 # -----------------------------
-# 3️⃣ Mock Deep Learning model (for demo)
-class MockReflectanceModel(nn.Module):
-    def forward(self, x):
-        # fake reflectance: normalize DN 0-255 → 0-1
-        return x / 255.0
-
-model = MockReflectanceModel()
-model.eval()
-
-# -----------------------------
-# 4️⃣ Function to extract patch from real-world coordinates
-def extract_patch(img_path, lat, lon, width_m, height_m):
+# 3️⃣ Function ดึง patch DN จากพิกัด
+def extract_patch_dn(img_path, lat, lon, width_m, height_m):
     with rasterio.open(img_path) as src:
+        # แปลง lat/lon → CRS ของภาพ
         transformer = Transformer.from_crs("EPSG:4326", src.crs, always_xy=True)
         x, y = transformer.transform(lon, lat)
         
+        # กำหนด bounding box รอบ patch
         half_w, half_h = width_m/2, height_m/2
         xmin, xmax = x-half_w, x+half_w
         ymin, ymax = y-half_h, y+half_h
         
+        # สร้าง window
         window = from_bounds(xmin, ymin, xmax, ymax, transform=src.transform)
         patch = src.read(window=window).astype("float32")  # (bands,H,W)
         
-        # mask nodata
+        # กรอง nodata
         if src.nodata is not None:
             patch = np.where(patch == src.nodata, np.nan, patch)
         
         return patch
 
 # -----------------------------
-# 5️⃣ Extract patch
-patch_dn = extract_patch(img_path, lat, lon, width_m, height_m)  # shape: (4,H,W)
-
-# Convert to tensor
-patch_tensor = torch.tensor(patch_dn).unsqueeze(0)  # (1,4,H,W)
+# 4️⃣ ดึง patch DN
+patch_dn = extract_patch_dn(img_path, lat, lon, width_m, height_m)  # shape: (4,H,W)
 
 # -----------------------------
-# 6️⃣ Predict reflectance using DL model
-with torch.no_grad():
-    patch_refl = model(patch_tensor)  # (1,4,H,W)
-
-# Convert back to numpy for calculation
-patch_refl_np = patch_refl.squeeze(0).numpy()  # (4,H,W)
-
-# -----------------------------
-# 7️⃣ Compute mean RGB + NIR
-mean_vals = {
-    'Blue': np.nanmean(patch_refl_np[0]),
-    'Green': np.nanmean(patch_refl_np[1]),
-    'Red': np.nanmean(patch_refl_np[2]),
-    'NIR': np.nanmean(patch_refl_np[3])
+# 5️⃣ คำนวณค่าเฉลี่ยของแต่ละ band
+mean_dn = {
+    'Blue': np.nanmean(patch_dn[0]),
+    'Green': np.nanmean(patch_dn[1]),
+    'Red': np.nanmean(patch_dn[2]),
+    'NIR': np.nanmean(patch_dn[3])
 }
 
 # -----------------------------
-# 8️⃣ Compute vegetation indices
-blue, green, red, nir = patch_refl_np
+# 6️⃣ คำนวณ vegetation indices (ใช้ DN โดยตรง)
+blue, green, red, nir = patch_dn
 
 ndvi = (nir - red) / (nir + red + 1e-8)
 tndvi = (ndvi - np.nanmin(ndvi)) / (np.nanmax(ndvi) - np.nanmin(ndvi) + 1e-8)
 sr = nir / (red + 1e-8)
 L = 0.5
-savi = ((nir - red) / (nir + red + L)) * (1+L)
+savi = ((nir - red) / (nir + red + L)) * (1 + L)
 masvi2 = (nir - red) / (nir + red - blue + 1e-8)
 
 indices = {
@@ -87,6 +67,6 @@ indices = {
 }
 
 # -----------------------------
-# 9️⃣ Show results
-print("Mean Reflectance (RGB + NIR):", mean_vals)
+# 7️⃣ แสดงผล
+print("Mean Spectral Bands (DN):", mean_dn)
 print("Vegetation Indices:", indices)
