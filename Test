@@ -1,31 +1,45 @@
 import rasterio
-from rasterio.mask import mask
-import geopandas as gpd
+from rasterio.windows import from_bounds
+from pyproj import Transformer
 import numpy as np
 
-# --- THEOS-1 multiband image
+# -----------------------------
+# 1️⃣ รายการแปลง: [lat, lon, width_m, height_m]
+plots = [
+    {"id": "plot1", "lat":18.11302, "lon":99.31819, "width":12, "height":10},
+    # สามารถเพิ่ม plot อื่นได้
+]
+
 img_path = "THEOS_multiband.tif"
 
-# --- Shapefile ของแปลง (Polygon)
-shp_path = "plots.shp"
-plots = gpd.read_file(shp_path)
-
-# --- เปิดภาพ
+# -----------------------------
+# 2️⃣ เปิดภาพ
 with rasterio.open(img_path) as src:
-    mean_per_plot = []
-    
-    for idx, plot in plots.iterrows():
-        geometry = [plot['geometry']]  # ต้องเป็น list ของ shapely geometry
+    results = []
+    for plot in plots:
+        lat, lon, w, h = plot['lat'], plot['lon'], plot['width'], plot['height']
         
-        # mask ภาพให้เหลือเฉพาะพื้นที่ Polygon
-        out_image, out_transform = mask(src, geometry, crop=True, nodata=np.nan)
-        # out_image.shape = (bands, H, W)
+        transformer = Transformer.from_crs("EPSG:4326", src.crs, always_xy=True)
+        x, y = transformer.transform(lon, lat)
         
-        # คำนวณ mean per band
+        half_w, half_h = w/2, h/2
+        xmin, xmax = x-half_w, x+half_w
+        ymin, ymax = y-half_h, y+half_h
+        
+        # crop patch ของ plot
+        window = from_bounds(xmin, ymin, xmax, ymax, transform=src.transform)
+        patch = src.read(window=window).astype("float32")
+        
+        # กรอง nodata
+        if src.nodata is not None:
+            patch = np.where(patch==src.nodata, np.nan, patch)
+        
+        # ค่าเฉลี่ย per band
         band_names = ['Blue','Green','Red','NIR']
-        mean_bands = {name: np.nanmean(out_image[i]) for i,name in enumerate(band_names)}
-        mean_per_plot.append({'plot_id': plot['id'], 'mean_bands': mean_bands})
+        mean_bands = {name: np.nanmean(patch[i]) for i,name in enumerate(band_names)}
+        results.append({"plot_id": plot["id"], "mean_bands": mean_bands})
 
-# --- แสดงผล
-for stat in mean_per_plot:
-    print(f"Plot {stat['plot_id']}: {stat['mean_bands']}")
+# -----------------------------
+# 3️⃣ แสดงผล
+for r in results:
+    print(f"Plot {r['plot_id']}: {r['mean_bands']}")
