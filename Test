@@ -1,48 +1,143 @@
-import rasterio
-from rasterio.windows import from_bounds
-from pyproj import Transformer
+# ต้องติดตั้ง: rasterio, numpy
+# pip install rasterio numpy
+
+import os
+import re
 import numpy as np
+import rasterio
+from rasterio.windows import Window
+from rasterio.transform import from_origin
+from rasterio.enums import Resampling
 
-# -----------------------------
-# 1️⃣ พิกัดแปลง
-lat, lon = 18.11302, 99.31819
-width_m, height_m = 12, 10  # ขนาดแปลง
+# ---------- การอ่าน metadata simple ----------
+def parse_dim_metadata(dim_path):
+    text = open(dim_path, 'r', encoding='utf-8', errors='ignore').read()
+    # หา NBANDS
+    nb = re.findall(r"<NBANDS>(.*?)</NBANDS>", text, flags=re.IGNORECASE)
+    nbands = int(nb[0]) if nb else None
 
-img_path = "THEOS_multiband.tif"
+    # หา BAND_INDEX และ BAND_OFFSET (ลำดับ)
+    band_indices = re.findall(r"<BAND_INDEX>(.*?)</BAND_INDEX>", text, flags=re.IGNORECASE)
+    band_offsets = re.findall(r"<BAND_OFFSET>(.*?)</BAND_OFFSET>", text, flags=re.IGNORECASE)
+    band_indices = [int(x.strip()) for x in band_indices] if band_indices else []
+    band_offsets = [float(x.strip()) for x in band_offsets] if band_offsets else []
 
-# -----------------------------
-# 2️⃣ เปิดภาพและดึง patch
-with rasterio.open(img_path) as src:
-    transformer = Transformer.from_crs("EPSG:4326", src.crs, always_xy=True)
-    x, y = transformer.transform(lon, lat)
-    
-    half_w, half_h = width_m/2, height_m/2
-    xmin, xmax = x-half_w, x+half_w
-    ymin, ymax = y-half_h, y+half_h
-    
-    window = from_bounds(xmin, ymin, xmax, ymax, transform=src.transform)
-    patch = src.read(window=window).astype("float32")  # (bands,H,W)
-    
-    # กรอง nodata
-    if src.nodata is not None:
-        patch = np.where(patch==src.nodata, np.nan, patch)
+    # หาไฟล์ภาพ (นามสกุลที่พบบ่อย)
+    files = re.findall(r"[\w\-/\\]+?\.(tif|TIF|img|IMG|hdr|DAT|dat)", text)
+    files = list(dict.fromkeys(files))  # unique order preserving
 
-# -----------------------------
-# 3️⃣ คำนวณค่า raw mean per band
-band_names = ['Blue','Green','Red','NIR']
-raw_mean = {name: np.nanmean(patch[i]) for i,name in enumerate(band_names)}
+    # คืนข้อมูล
+    return {
+        "nbands": nbands,
+        "band_indices": band_indices,
+        "band_offsets": band_offsets,
+        "files_in_metadata": files,
+        "raw_text": text
+    }
 
-# -----------------------------
-# 4️⃣ Approximate scaling → ให้ใกล้ trend ตาราง
-# สมมติ table trend: Blue<Green<Red<NIR, target range 50–70
-values = np.array(list(raw_mean.values()))
-min_val, max_val = np.nanmin(values), np.nanmax(values)
-target_min, target_max = 50, 70
+# ---------- ฟังก์ชันหลัก: อ่านภาพและดึง patch ----------
+def extract_patch_at_coord(image_path, lon, lat, patch_width_m=10.0, patch_height_m=12.0, out_path=None):
+    """
+    image_path: path to raster (GeoTIFF) with CRS (assumes lon/lat if not)
+    lon, lat: coordinate in decimal degrees (E, N)
+    patch_width_m, patch_height_m: desired patch size in meters
+    out_path: if provided, save extracted patch as GeoTIFF
+    """
+    with rasterio.open(image_path) as src:
+        # ensure we work in same CRS: transform lon/lat to image CRS if needed
+        src_crs = src.crs
+        # Use rasterio's transform for coordinate conversion
+        from rasterio.warp import transform
+        if src_crs and src_crs.to_string().lower().startswith("epsg:4326"):
+            x, y = lon, lat
+        else:
+            # convert lon/lat (EPSG:4326) -> image crs
+            xs, ys = transform({'init':'epsg:4326'}, src.crs, [lon], [lat])
+            x, y = xs[0], ys[0]
 
-scaled_mean = target_min + (values - min_val) / (max_val - min_val + 1e-8) * (target_max - target_min)
-approx_mean = {name: round(val,2) for name, val in zip(band_names, scaled_mean)}
+        # get pixel resolution (meters per pixel). 
+        # Note: transform.a is pixel width in CRS units per pixel; transform.e is negative pixel height
+        t = src.transform
+        px_width = abs(t.a)   # units per pixel in X
+        px_height = abs(t.e)  # units per pixel in Y
 
-# -----------------------------
-# 5️⃣ แสดงผล
-print("Raw mean per band:", raw_mean)
-print("Approximate scaled mean per band:", approx_mean)
+        # If CRS is geographic (deg) then px_width is in degrees -> convert degrees -> meters approximately
+        from pyproj import Transformer
+        if src_crs and src_crs.to_string().lower().startswith("epsg:4326"):
+            # compute meters per degree at latitude
+            transformer = Transformer.from_crs("epsg:4326", "epsg:3857", always_xy=True)
+            mx1, my1 = transformer.transform(lon, lat)
+            mx2, my2 = transformer.transform(lon + t.a, lat + t.e)
+            # meters per pixel approximate
+            px_width = abs(mx2 - mx1)
+            px_height = px_width  # approximation; we recompute below if necessary
+
+        # compute window size in pixels
+        win_w = max(1, int(round(patch_width_m / px_width)))
+        win_h = max(1, int(round(patch_height_m / px_height)))
+
+        # get row, col of the coordinate
+        row, col = src.index(x, y)  # (row, col)
+
+        # define window (centered on the pixel)
+        col_off = int(col - win_w // 2)
+        row_off = int(row - win_h // 2)
+        window = Window(col_off, row_off, win_w, win_h)
+
+        # Read all bands for that window (handles bounds automatically via boundless=True if necessary)
+        data = src.read(window=window, boundless=True, fill_value=0)
+
+        # compute simple stats for each band
+        stats = []
+        for b in range(data.shape[0]):
+            arr = data[b].astype(np.float64)
+            mask = (arr != 0)  # simple mask; adjust if 0 is valid DN
+            vals = arr[mask]
+            if vals.size == 0:
+                stats.append({"band": b+1, "mean": None, "median": None, "std": None, "count": 0})
+            else:
+                stats.append({"band": b+1, "mean": float(np.mean(vals)), "median": float(np.median(vals)), "std": float(np.std(vals)), "count": int(vals.size)})
+
+        # save patch if requested
+        if out_path:
+            # build transform for the window
+            win_transform = src.window_transform(window)
+            meta = src.meta.copy()
+            meta.update({
+                "height": data.shape[1],
+                "width": data.shape[2],
+                "transform": win_transform
+            })
+            with rasterio.open(out_path, "w", **meta) as dst:
+                dst.write(data)
+
+        return {
+            "stats": stats,
+            "data_shape": data.shape,  # (bands, height, width)
+            "window": (col_off, row_off, win_w, win_h),
+            "transform": src.window_transform(window)
+        }
+
+# ------------------ ตัวอย่างการใช้ ------------------
+if __name__ == "__main__":
+    dim_path = "/path/to/METADATA.DIM"   # แก้เป็น path จริง (ถ้าต้องการ parse)
+    info = parse_dim_metadata(dim_path)
+    print("Parsed metadata summary:")
+    print(" nbands:", info['nbands'])
+    print(" band_indices (found):", info['band_indices'])
+    print(" band_offsets (found):", info['band_offsets'])
+    print(" files mentioned in metadata:", info['files_in_metadata'])
+    print()
+
+    # ระบุพาธไฟล์ภาพ GeoTIFF ของคุณที่มีแบนด์ 4 แบนด์
+    image_path = "/path/to/your_image.tif"   # <- แก้เป็นภาพจริงของคุณ
+    lon = 99.31819
+    lat = 18.11302
+
+    out_patch = "extracted_patch.tif"
+    res = extract_patch_at_coord(image_path, lon, lat, patch_width_m=10.0, patch_height_m=12.0, out_path=out_patch)
+    print("Extraction result:", res['data_shape'], "window:", res['window'])
+    print("Per-band stats:")
+    for s in res['stats']:
+        print(s)
+    print("Saved patch to:", out_patch)
