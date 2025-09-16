@@ -1,7 +1,11 @@
-Sample Group
+import streamlit as st
+from streamlit_folium import st_folium
+import folium
 
-This study employed satellite imagery covering Ko Kha District, Lampang Province. The dataset consisted of satellite image files and tabular data from 55 sampling locations, which served as the primary information for analysis and model construction (Wongchai, Insuan, & Promwungkwa, 2020).
+st.title("🌿 Simple Interactive Map")
 
-Research Variables
-	•	Independent variables: Five vegetation indices, namely NDVI, TNDVI, SR, SAVI, and MSAVI2.
-	•	Dependent variable: Aboveground biomass (AGB).
+# สร้าง map โดยไม่กำหนดพิกัดเฉพาะ (center default)
+m = folium.Map(zoom_start=2, tiles="OpenStreetMap")
+
+# แสดง map ใน Streamlit
+st_data = st_folium(m, width=700, height=500)
