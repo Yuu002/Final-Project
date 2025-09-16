@@ -1,86 +1,60 @@
-import os
-import numpy as np
 import rasterio
-from rasterio.warp import transform
-from rasterio.plot import reshape_as_raster, reshape_as_image
+import numpy as np
 from rasterio.mask import mask
-import matplotlib.pyplot as plt
-from shapely.geometry import shape, Point, mapping
-import fiona
+from pyproj import transform
+from shapely.geometry import box, mapping
 
-# -------------------- User inputs --------------------
-tif_file = "your_satellite_file.tif"   # <-- ใส่ path ของไฟล์ GeoTIFF ที่เป็น 4-band
-lat, lon = 18.11402, 99.31819          # <-- พิกัดที่ต้องการหา DN (WGS84)
-window = 1   # รอบ pixel: 0 = single pixel, 1 = 3x3 window, 2 = 5x5, ...
-shapefile_path = None   # <-- ถ้ามี shapefile ของแปลง ให้ใส่ path เช่น "plot.shp", ถ้าไม่มี ให้เป็น None
-
-# Radiometric calibration ที่ผู้ใช้ให้ (Gain, Bias)
-gains = {
-    "blue":  1.46853,
-    "green": 1.50071,
-    "red":   1.71019,
-    "nir":   1.67119
-}
-biases = {
-    "blue":  0.0,
-    "green": 0.0,
-    "red":   0.0,
-    "nir":   0.0
-}
-
-# Sun info
-sun_elevation_deg = 44.344240
-sun_zenith_deg = 90.0 - sun_elevation_deg
-
-# Optional: ESUN per band (ถ้ารู้ค่า sensor/ESUN ให้ใส่ เพื่อคำนวณ TOA reflectance)
-# Format: [blue, green, red, nir] (one value per band). ถ้าไม่รู้ ให้เป็น None
-esun_values = None
-
-# -----------------------------------------------------
-
-def latlon_to_pixel(src, lon, lat):
-    # transform lon/lat -> dataset CRS -> index
+# ---------------- Function: ค่าเฉลี่ย DN แบบ window ----------------
+def values_from_window(src, lon, lat, window=1):
+    # แปลง lat/lon -> CRS ของภาพ
     xs, ys = transform('EPSG:4326', src.crs, [lon], [lat])
     x, y = xs[0], ys[0]
+
+    # หาตำแหน่ง pixel (row, col)
     row, col = src.index(x, y)
-    return row, col, x, y
 
-def read_window_values(src, row, col, window=0):
-    # return array shape (bands, h, w) for window (2*window+1)
-    hwin = 2*window + 1
-    bands = src.count
-    # compute window bounds in row/col
-    r0 = row - window
-    c0 = col - window
-    r1 = row + window
-    c1 = col + window
-    # clip to image
-    r0_clipped = max(r0, 0)
-    c0_clipped = max(c0, 0)
-    r1_clipped = min(r1, src.height-1)
-    c1_clipped = min(c1, src.width-1)
-    out = np.zeros((bands, r1_clipped - r0_clipped + 1, c1_clipped - c0_clipped + 1), dtype=np.float32)
-    for b in range(1, bands+1):
-        arr = src.read(b, window=((r0_clipped, r1_clipped+1), (c0_clipped, c1_clipped+1)))
-        out[b-1] = arr
-    return out, (r0_clipped, r1_clipped, c0_clipped, c1_clipped)
+    # สร้าง window
+    w = window
+    window_data = src.read(window=(col - w, row - w, col + w + 1, row + w + 1))
 
-def values_from_mask(src, shp_path):
-    # read polygon from shapefile (first feature) and mask raster
-    with fiona.open(shp_path, "r") as shp:
-        features = [feat["geometry"] for feat in shp]
-    out_image, out_transform = mask(src, features, crop=False)
-    # out_image shape: (bands, H, W) but masked values are 0 or nodata
-    # convert masked to numpy and mask zeros (or check src.nodata)
+    # กำจัด nodata
+    nod = src.nodata
+    if nod is not None:
+        mask_valid = window_data != nod
+    else:
+        mask_valid = window_data > 0
+
+    band_means = []
+    for i in range(window_data.shape[0]):
+        valid = window_data[i][mask_valid[i]]
+        if valid.size == 0:
+            band_means.append(np.nan)
+        else:
+            band_means.append(valid.mean())
+    return np.array(band_means)
+
+# ---------------- Function: ค่าเฉลี่ย DN แบบ rectangle (พื้นที่จริง) ----------------
+def values_from_rectangle(src, lon, lat, width=10, height=12):
+    # แปลง lat/lon -> CRS ของภาพ
+    xs, ys = transform('EPSG:4326', src.crs, [lon], [lat])
+    x, y = xs[0], ys[0]
+
+    # สร้าง polygon (rectangle) รอบจุด (centered) ขนาด width x height (เมตร)
+    half_w, half_h = width/2, height/2
+    rect = box(x - half_w, y - half_h, x + half_w, y + half_h)
+
+    # mask raster ด้วย polygon
+    out_image, out_transform = mask(src, [mapping(rect)], crop=True)
     arr = out_image.astype(np.float32)
-    # mask using src.nodata if present
+
+    # กำจัด nodata
     nod = src.nodata
     if nod is not None:
         mask_valid = arr != nod
     else:
-        # try to mask zeros and negatives (heuristic)
         mask_valid = arr > 0
-    # compute per-band means over valid pixels
+
+    # ค่าเฉลี่ย DN ต่อ band
     band_means = []
     for i in range(arr.shape[0]):
         valid = arr[i][mask_valid[i]]
@@ -88,107 +62,17 @@ def values_from_mask(src, shp_path):
             band_means.append(np.nan)
         else:
             band_means.append(valid.mean())
-    return np.array(band_means), arr
+    return np.array(band_means)
 
-def dn_to_radiance(dn, band_name):
-    return gains[band_name] * dn + biases[band_name]
+# ---------------- Example usage ----------------
+tif_file = "your_image.tif"
+lon, lat = 99.31819, 18.11402  # พิกัดตัวอย่าง
 
-def radiance_to_toa_reflectance(L, esun, sun_zenith_deg, doy=None):
-    """
-    L: radiance (array or scalar)
-    esun: ESUN for that band (scalar)
-    sun_zenith_deg: degrees
-    doy: day of year (1-365) - if provided we can compute earth-sun distance d (AU)
-    If doy is None, assume d=1 AU (not accurate). Prefer provide doy to get exact d.
-    """
-    # compute earth-sun distance d in AU if doy provided (approx)
-    if doy is not None:
-        # approximate using formula from NASA (in AU)
-        theta = 2.0 * np.pi * (doy - 1) / 365.0
-        d = 1.00011 + 0.034221 * np.cos(theta) + 0.00128 * np.sin(theta) \
-            + 0.000719 * np.cos(2*theta) + 0.000077 * np.sin(2*theta)
-    else:
-        d = 1.0
-    mu0 = np.cos(np.deg2rad(sun_zenith_deg))
-    # avoid division by zero
-    rho = (np.pi * L * (d**2)) / (esun * mu0)
-    return rho
-
-# ---------------- Main processing ----------------
 with rasterio.open(tif_file) as src:
-    if src.count < 4:
-        raise ValueError("ไฟล์นี้มีแบนด์ไม่ครบ 4 แบนด์ (ต้องเป็น 4-band GeoTIFF)")
+    # 1) แบบ window
+    dn_window = values_from_window(src, lon, lat, window=1)
+    print("ค่าเฉลี่ย DN (3x3 window):", dn_window)
 
-    # 1) ถ้ามี shapefile: คำนวณค่าเฉลี่ยทั้งแปลง
-    if shapefile_path is not None and os.path.exists(shapefile_path):
-        band_means_dn, masked_arr = values_from_mask(src, shapefile_path)
-        print("ค่าเฉลี่ย DN (ทั้งแปลง) ต่อแบนด์:", band_means_dn)
-        dn_per_band = band_means_dn  # shape (4,)
-    else:
-        # 2) ถ้าไม่มี shapefile: แปลงพิกัด -> pixel index และอ่าน window
-        row, col, xproj, yproj = latlon_to_pixel(src, lon, lat)
-        arr_window, bounds = read_window_values(src, row, col, window=window)
-        # arr_window shape: (bands, h, w)
-        band_means = arr_window.reshape(arr_window.shape[0], -1).mean(axis=1)
-        print(f"พิกัด (lat, lon): {lat}, {lon}")
-        print(f"พิกัดใน CRS ของไฟล์: x={xproj:.3f}, y={yproj:.3f}")
-        print("ตำแหน่ง pixel center (row, col):", row, col)
-        print(f"Window size: {2*window+1}x{2*window+1}, actual shape read:", arr_window.shape[1:])
-        print("ค่า DN (per-band) ใน window (mean):", band_means)
-        dn_per_band = band_means
-
-    # map bands -> names (คาดว่า band order = [Blue, Green, Red, NIR])
-    band_names = ["blue", "green", "red", "nir"]
-    # radiance per band
-    radiances = []
-    for i, name in enumerate(band_names):
-        L = dn_to_radiance(dn_per_band[i], name)
-        radiances.append(L)
-    radiances = np.array(radiances)
-    print("Radiance (per-band) จาก Gain/Bias:", radiances)
-
-    # compute TOA reflectance if ESUN provided
-    if esun_values is not None:
-        esun = np.array(esun_values)
-        if esun.shape[0] != 4:
-            raise ValueError("esun_values ต้องเป็น array/list ขนาด 4 (blue, green, red, nir)")
-        # optional: ask user to provide doy if want more accurate d; here we skip (d=1)
-        rho = radiance_to_toa_reflectance(radiances, esun, sun_zenith_deg, doy=None)
-        print("TOA Reflectance (per-band) :", rho)
-    else:
-        print("ESUN not provided — ข้ามการคำนวณ TOA Reflectance. หากต้องการค่า Reflectance ให้ใส่ esun_values สำหรับแต่ละแบนด์")
-
-    # ---------------- Visualization: RGB composite around point ----------------
-    # อ่านพื้นที่เล็กๆ รอบ pixel เพื่อวาดภาพ
-    vis_window = 50  # pixels half-size for visualization (will show (2*vis_window+1)^2 area)
-    # compute center row/col if we had row, col; if shapefile provided, center on bounding box
-    if shapefile_path is None:
-        center_row, center_col = row, col
-    else:
-        # when shapefile used, approximate center as centroid of bbox
-        # try to compute centroid of first feature
-        with fiona.open(shapefile_path, "r") as shp:
-            geom = shp[0]["geometry"]
-        centroid = shape(geom).centroid
-        xs, ys = transform('EPSG:4326', src.crs, [centroid.x], [centroid.y])
-        center_row, center_col = src.index(xs[0], ys[0])
-
-    r0 = max(center_row - vis_window, 0)
-    r1 = min(center_row + vis_window, src.height - 1)
-    c0 = max(center_col - vis_window, 0)
-    c1 = min(center_col + vis_window, src.width - 1)
-    vis = src.read(window=((r0, r1+1), (c0, c1+1)))  # shape (bands, H, W)
-
-    # prepare RGB: use [red, green, blue] -> map order in array (blue=band1)
-    # assume band order = [Blue, Green, Red, NIR]
-    rgb = np.stack([vis[2], vis[1], vis[0]], axis=2)  # shape (H, W, 3)
-    # scale for display (percentile stretch)
-    p2, p98 = np.percentile(rgb, (2, 98))
-    rgb_stretch = np.clip((rgb - p2) / (p98 - p2), 0, 1)
-
-    plt.figure(figsize=(6,6))
-    plt.imshow(rgb_stretch)
-    plt.scatter([center_col - c0], [center_row - r0], c='yellow', s=50, marker='x')  # mark center
-    plt.title(f"RGB (R,G,B) around point lat={lat}, lon={lon}")
-    plt.axis('off')
-    plt.show()
+    # 2) แบบ rectangle
+    dn_rect = values_from_rectangle(src, lon, lat, width=10, height=12)
+    print("ค่าเฉลี่ย DN (พื้นที่ 10x12 m):", dn_rect)
