@@ -1,61 +1,70 @@
 import rasterio
 import numpy as np
-from rasterio.windows import from_bounds
+from rasterio.mask import mask
 from pyproj import Transformer
+from shapely.geometry import box, mapping
+import math
 
-# ------------------------------
-# Input
-# ------------------------------
-tif_path = "your_image.tif"   # แก้เป็น path ของไฟล์ GeoTIFF
-lat, lon = 18.11402, 99.31819
-plot_width, plot_height = 10, 12  # ขนาดแปลง (เมตร)
-
-# ------------------------------
-# กำหนดค่า Gain และ Bias ของแต่ละ band
-# ------------------------------
+# ---------------- Metadata ----------------
 gains = {
-    1: 1.46853,   # Blue
-    2: 1.50071,   # Green
-    3: 1.71019,   # Red
-    4: 1.67119    # NIR
+    "blue": 1.46853,
+    "green": 1.50071,
+    "red": 1.71019,
+    "nir": 1.67119
 }
-bias = {
-    1: 0.0,
-    2: 0.0,
-    3: 0.0,
-    4: 0.0
+biases = {
+    "blue": 0.0,
+    "green": 0.0,
+    "red": 0.0,
+    "nir": 0.0
 }
+sun_elevation = 44.344240  # degree
 
-# ------------------------------
-# เปิดไฟล์ GeoTIFF
-# ------------------------------
-with rasterio.open(tif_path) as src:
-    # แปลงพิกัด lat/lon → UTM
-    transformer = Transformer.from_crs("EPSG:4326", src.crs, always_xy=True)
-    x, y = transformer.transform(lon, lat)
+# ---------------- Function ----------------
+def get_reflectance_from_rectangle(tif_file, lon, lat, width=10, height=12):
+    with rasterio.open(tif_file) as src:
+        # แปลงพิกัด (lon, lat WGS84) → CRS ของภาพ (UTM Zone 47N)
+        transformer = Transformer.from_crs("EPSG:4326", src.crs, always_xy=True)
+        x, y = transformer.transform(lon, lat)
 
-    # หาค่าขอบเขต (bounding box) 10m × 12m
-    half_w, half_h = plot_width / 2, plot_height / 2
-    xmin, xmax = x - half_w, x + half_w
-    ymin, ymax = y - half_h, y + half_h
+        # สร้างกรอบสี่เหลี่ยมรอบพิกัด (10m x 12m)
+        half_w, half_h = width/2, height/2
+        rect = box(x - half_w, y - half_h, x + half_w, y + half_h)
 
-    # ดึง window ตาม bounding box
-    window = from_bounds(xmin, ymin, xmax, ymax, src.transform)
+        # ตัดภาพตาม polygon
+        out_image, _ = mask(src, [mapping(rect)], crop=True)
+        arr = out_image.astype(np.float32)
 
-    # อ่านค่าพิกเซลทุก band
-    dn_values = []
-    for b in range(1, src.count + 1):
-        band = src.read(b, window=window).astype(float)
-        # แปลง DN → Radiance (Gain * DN + Bias)
-        band_cal = band * gains[b] + bias[b]
-        # เก็บค่าเฉลี่ย
-        dn_values.append(np.nanmean(band_cal))
+        # กำจัด nodata
+        nod = src.nodata
+        if nod is not None:
+            mask_valid = arr != nod
+        else:
+            mask_valid = arr > 0
 
-# ------------------------------
-# แสดงผลลัพธ์
-# ------------------------------
-print("ค่า DN เฉลี่ยทั้งแปลง (10m x 12m):")
-print(f"Blue : {dn_values[0]:.4f}")
-print(f"Green: {dn_values[1]:.4f}")
-print(f"Red  : {dn_values[2]:.4f}")
-print(f"NIR  : {dn_values[3]:.4f}")
+        # ค่าเฉลี่ย DN ต่อ band
+        band_means = []
+        for i in range(arr.shape[0]):
+            valid = arr[i][mask_valid[i]]
+            band_means.append(valid.mean() if valid.size > 0 else np.nan)
+
+        # ชื่อแบนด์เรียงตาม DIMAP (Blue, Green, Red, NIR)
+        band_names = ["blue", "green", "red", "nir"]
+
+        # DN → Radiance (DN * Gain + Bias)
+        radiance = {b: band_means[i] * gains[b] + biases[b] for i, b in enumerate(band_names)}
+
+        # Radiance → TOA Reflectance
+        toa_reflectance = {b: radiance[b] / math.sin(math.radians(sun_elevation)) for b in band_names}
+
+        return band_means, radiance, toa_reflectance
+
+# ---------------- Run ----------------
+tif_file = "IMAGERY.TIF"
+lon, lat = 99.31819, 18.11402  # พิกัด
+
+dn_mean, radiance, reflectance = get_reflectance_from_rectangle(tif_file, lon, lat)
+
+print("ค่าเฉลี่ย DN (10m x 12m):", dn_mean)
+print("Radiance:", radiance)
+print("TOA Reflectance:", reflectance)
