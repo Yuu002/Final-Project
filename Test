@@ -2,10 +2,10 @@ import streamlit as st
 from streamlit_folium import st_folium
 import folium
 
-st.title("🌿 Simple Interactive Map")
+st.title("🌿 Simple Map Example")
 
-# สร้าง map โดยไม่กำหนดพิกัดเฉพาะ (center default)
-m = folium.Map(zoom_start=2, tiles="OpenStreetMap")
+# กำหนดพิกัดกลางโลก (0,0) หรือใกล้ประเทศไทยก็ได้
+m = folium.Map(location=[15, 100], zoom_start=4)
 
-# แสดง map ใน Streamlit
-st_data = st_folium(m, width=700, height=500)
+# แสดง map
+st_folium(m, width=700, height=500)
