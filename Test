@@ -23,8 +23,10 @@ def get_band_means_zonal(tif_file, lon, lat, width_m, height_m):
 
         return dn_means
 
-# ---------------- Interactive Input ----------------
-tif_file = input("กรอก path ของไฟล์ GeoTIFF: ")
+# ---------------- Fixed GeoTIFF File ----------------
+tif_file = "IMAGERY.TIF"  # ใส่ไฟล์ GeoTIFF ตรงนี้
+
+# ---------------- กรอกพิกัดและขนาดพื้นที่ ----------------
 lon = float(input("กรอก Longitude: "))
 lat = float(input("กรอก Latitude: "))
 width_m = float(input("กรอกความกว้างพื้นที่ (เมตร): "))
