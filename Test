@@ -1,26 +1,26 @@
 import math
 
-# ค่าเฉลี่ย DN
+# ค่าเฉลี่ย DN ของ band
 b, g, r, nir = 53, 60, 67, 58
 
 # NDVI
 ndvi = (nir - r) / (nir + r)
 
 # TNDVI
-tndvi = math.sqrt((ndvi + 0.5) / 1.5)
+L = 0.5
+tndvi = math.sqrt(((nir - r) / (nir + r)) + L)
 
 # SR
 sr = nir / r
 
-# SAVI (ใช้ L=0.5)
-L = 0.5
-savi = ((nir - r) / (nir + r + L)) * (1 + L)
+# SAVI
+savi = ((1 + L) * (nir - r)) / (nir + r + L)
 
 # MSAVI2
-msavi2 = (2 * nir + 1 - math.sqrt((2 * nir + 1)**2 - 8 * (nir - r))) / 2
+msavi2 = (2 * (nir + 1) - math.sqrt((2 * nir + 1)**2 - 8 * (nir - r))) / 2
 
-print("NDVI :", ndvi)
-print("TNDVI:", tndvi)
-print("SR   :", sr)
-print("SAVI :", savi)
-print("MSAVI2:", msavi2)
+print("NDVI   :", ndvi)
+print("TNDVI  :", tndvi)
+print("SR     :", sr)
+print("SAVI   :", savi)
+print("MSAVI2 :", msavi2)
