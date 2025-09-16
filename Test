@@ -1,9 +1,10 @@
-Research Significance and Problem Statement
+Research Objectives
+	1.	To examine the relationship between vegetation indices derived from satellite imagery and aboveground biomass (AGB).
+	2.	To construct and compare AGB prediction models using both traditional statistical methods and machine learning techniques.
+	3.	To develop a web-based application that facilitates convenient, rapid, and user-friendly AGB prediction.
 
-Estimating aboveground biomass (AGB) is a crucial component in forest resource studies and land potential assessments, as it reflects the amount of biomass accumulated in a given area. Reliable AGB estimation provides essential insights for forest management, ecosystem monitoring, and carbon stock evaluation. In recent years, the use of satellite imagery to develop predictive models for AGB has gained increasing attention, particularly through vegetation indices (VIs), which have shown relatively strong correlations with biomass levels (Lu, 2006).
+⸻
 
-Several studies have reported that the Transformed Normalized Difference Vegetation Index (TNDVI) exhibits a positive relationship with AGB. However, at higher levels of vegetation density, TNDVI tends to saturate, thereby limiting its effectiveness in capturing biomass variation. To overcome this challenge, other vegetation indices such as the Normalized Difference Vegetation Index (NDVI), Simple Ratio (SR), Soil-Adjusted Vegetation Index (SAVI), and Modified Soil-Adjusted Vegetation Index 2 (MSAVI2) have been introduced to minimize soil background effects and improve predictive accuracy (Wongchai, Insuan, & Promwungkwa, 2020). Thus, the selection of appropriate vegetation indices is a critical factor influencing the accuracy of AGB prediction models.
-
-In addition, statistical approaches such as linear regression, particularly stepwise regression for variable selection, have been widely employed to develop AGB prediction equations from vegetation indices, helping to identify the most influential predictors (Wongchai, Insuan, & Promwungkwa, 2020). At the same time, machine learning (ML) methods—including multiple linear regression, Random Forest, Decision Tree, XGBoost, and Support Vector Regression (SVR)—have been increasingly compared with traditional statistical models to evaluate their capacity for enhancing prediction accuracy (Yan et al., 2023).
-
-In summary, AGB estimation based on vegetation indices has been continuously evolving through the refinement of index selection, improvements in statistical modeling, and the integration of machine learning techniques. These advancements enable the production of high-resolution and accurate biomass maps, which are highly valuable for sustainable forest management and can be further extended to applications in carbon assessment and climate change mitigation.
+Research Hypotheses
+	1.	Vegetation indices derived from satellite imagery can be employed to predict aboveground biomass with greater accuracy and efficiency than relying solely on conventional field-based surveys.
+	2.	Machine learning models can provide superior predictive performance for aboveground biomass compared to basic statistical models.
