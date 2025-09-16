@@ -3,25 +3,9 @@ import numpy as np
 from rasterio.mask import mask
 from pyproj import Transformer
 from shapely.geometry import box, mapping
-import math
-
-# ---------------- Metadata ----------------
-gains = {
-    "blue": 1.46853,
-    "green": 1.50071,
-    "red": 1.71019,
-    "nir": 1.67119
-}
-biases = {
-    "blue": 0.0,
-    "green": 0.0,
-    "red": 0.0,
-    "nir": 0.0
-}
-sun_elevation = 44.344240  # degree
 
 # ---------------- Function ----------------
-def get_reflectance_from_rectangle(tif_file, lon, lat, width=10, height=12):
+def get_dn_from_rectangle(tif_file, lon, lat, width=10, height=12):
     with rasterio.open(tif_file) as src:
         # แปลงพิกัด (lon, lat WGS84) → CRS ของภาพ (UTM Zone 47N)
         transformer = Transformer.from_crs("EPSG:4326", src.crs, always_xy=True)
@@ -50,21 +34,16 @@ def get_reflectance_from_rectangle(tif_file, lon, lat, width=10, height=12):
 
         # ชื่อแบนด์เรียงตาม DIMAP (Blue, Green, Red, NIR)
         band_names = ["blue", "green", "red", "nir"]
+        dn_dict = {band_names[i]: band_means[i] for i in range(len(band_names))}
 
-        # DN → Radiance (DN * Gain + Bias)
-        radiance = {b: band_means[i] * gains[b] + biases[b] for i, b in enumerate(band_names)}
-
-        # Radiance → TOA Reflectance
-        toa_reflectance = {b: radiance[b] / math.sin(math.radians(sun_elevation)) for b in band_names}
-
-        return band_means, radiance, toa_reflectance
+        return dn_dict
 
 # ---------------- Run ----------------
 tif_file = "IMAGERY.TIF"
 lon, lat = 99.31819, 18.11402  # พิกัด
 
-dn_mean, radiance, reflectance = get_reflectance_from_rectangle(tif_file, lon, lat)
+dn_mean = get_dn_from_rectangle(tif_file, lon, lat)
 
-print("ค่าเฉลี่ย DN (10m x 12m):", dn_mean)
-print("Radiance:", radiance)
-print("TOA Reflectance:", reflectance)
+print("ค่าเฉลี่ย DN (10m x 12m):")
+for b, val in dn_mean.items():
+    print(f"{b.capitalize()}: {val:.2f}")
