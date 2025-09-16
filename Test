@@ -1,9 +1,8 @@
 import rasterio
 import numpy as np
 from rasterio.mask import mask
-from pyproj import Transformer
 from shapely.geometry import box, mapping
-import math
+import fiona
 
 # ---------------- Metadata ----------------
 gains = {
@@ -18,53 +17,44 @@ biases = {
     "red": 0.0,
     "nir": 0.0
 }
-sun_elevation = 44.344240  # degree
 
 # ---------------- Function ----------------
-def get_reflectance_from_rectangle(tif_file, lon, lat, width=10, height=12):
+def mean_dn_whole_plot(tif_file, shapefile_path=None):
     with rasterio.open(tif_file) as src:
-        # แปลงพิกัด (lon, lat WGS84) → CRS ของภาพ (UTM Zone 47N)
-        transformer = Transformer.from_crs("EPSG:4326", src.crs, always_xy=True)
-        x, y = transformer.transform(lon, lat)
+        if shapefile_path is not None:
+            # ใช้ shapefile mask
+            with fiona.open(shapefile_path, "r") as shp:
+                features = [feat["geometry"] for feat in shp]
+            out_image, _ = mask(src, features, crop=False)
+        else:
+            # ถ้าไม่มี shapefile ใช้ทั้ง raster
+            out_image = src.read()
 
-        # สร้างกรอบสี่เหลี่ยมรอบพิกัด (10m x 12m)
-        half_w, half_h = width/2, height/2
-        rect = box(x - half_w, y - half_h, x + half_w, y + half_h)
-
-        # ตัดภาพตาม polygon
-        out_image, _ = mask(src, [mapping(rect)], crop=True)
         arr = out_image.astype(np.float32)
 
-        # กำจัด nodata
+        # mask nodata
         nod = src.nodata
         if nod is not None:
             mask_valid = arr != nod
         else:
             mask_valid = arr > 0
 
-        # ค่าเฉลี่ย DN ต่อ band
         band_means = []
         for i in range(arr.shape[0]):
             valid = arr[i][mask_valid[i]]
             band_means.append(valid.mean() if valid.size > 0 else np.nan)
 
-        # ชื่อแบนด์เรียงตาม DIMAP (Blue, Green, Red, NIR)
+        # DN → Radiance
         band_names = ["blue", "green", "red", "nir"]
+        radiance = {b: band_means[i]*gains[b] + biases[b] for i, b in enumerate(band_names)}
 
-        # DN → Radiance (DN * Gain + Bias)
-        radiance = {b: band_means[i] * gains[b] + biases[b] for i, b in enumerate(band_names)}
-
-        # Radiance → TOA Reflectance
-        toa_reflectance = {b: radiance[b] / math.sin(math.radians(sun_elevation)) for b in band_names}
-
-        return band_means, radiance, toa_reflectance
+        return band_means, radiance
 
 # ---------------- Run ----------------
 tif_file = "your_image.tif"
-lon, lat = 99.31819, 18.11402  # พิกัด
+shapefile_path = "plot.shp"  # หรือ None ถ้าไม่มี
 
-dn_mean, radiance, reflectance = get_reflectance_from_rectangle(tif_file, lon, lat)
+dn_mean, radiance = mean_dn_whole_plot(tif_file, shapefile_path)
 
-print("ค่าเฉลี่ย DN (10m x 12m):", dn_mean)
+print("ค่าเฉลี่ย DN ทั้งแปลง:", dn_mean)
 print("Radiance:", radiance)
-print("TOA Reflectance:", reflectance)
