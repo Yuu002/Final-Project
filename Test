@@ -1,60 +1,61 @@
 import rasterio
 import numpy as np
-from rasterio.mask import mask
-from shapely.geometry import box, mapping
-import fiona
+from rasterio.windows import from_bounds
+from pyproj import Transformer
 
-# ---------------- Metadata ----------------
+# ------------------------------
+# Input
+# ------------------------------
+tif_path = "your_image.tif"   # แก้เป็น path ของไฟล์ GeoTIFF
+lat, lon = 18.11402, 99.31819
+plot_width, plot_height = 10, 12  # ขนาดแปลง (เมตร)
+
+# ------------------------------
+# กำหนดค่า Gain และ Bias ของแต่ละ band
+# ------------------------------
 gains = {
-    "blue": 1.46853,
-    "green": 1.50071,
-    "red": 1.71019,
-    "nir": 1.67119
+    1: 1.46853,   # Blue
+    2: 1.50071,   # Green
+    3: 1.71019,   # Red
+    4: 1.67119    # NIR
 }
-biases = {
-    "blue": 0.0,
-    "green": 0.0,
-    "red": 0.0,
-    "nir": 0.0
+bias = {
+    1: 0.0,
+    2: 0.0,
+    3: 0.0,
+    4: 0.0
 }
 
-# ---------------- Function ----------------
-def mean_dn_whole_plot(tif_file, shapefile_path=None):
-    with rasterio.open(tif_file) as src:
-        if shapefile_path is not None:
-            # ใช้ shapefile mask
-            with fiona.open(shapefile_path, "r") as shp:
-                features = [feat["geometry"] for feat in shp]
-            out_image, _ = mask(src, features, crop=False)
-        else:
-            # ถ้าไม่มี shapefile ใช้ทั้ง raster
-            out_image = src.read()
+# ------------------------------
+# เปิดไฟล์ GeoTIFF
+# ------------------------------
+with rasterio.open(tif_path) as src:
+    # แปลงพิกัด lat/lon → UTM
+    transformer = Transformer.from_crs("EPSG:4326", src.crs, always_xy=True)
+    x, y = transformer.transform(lon, lat)
 
-        arr = out_image.astype(np.float32)
+    # หาค่าขอบเขต (bounding box) 10m × 12m
+    half_w, half_h = plot_width / 2, plot_height / 2
+    xmin, xmax = x - half_w, x + half_w
+    ymin, ymax = y - half_h, y + half_h
 
-        # mask nodata
-        nod = src.nodata
-        if nod is not None:
-            mask_valid = arr != nod
-        else:
-            mask_valid = arr > 0
+    # ดึง window ตาม bounding box
+    window = from_bounds(xmin, ymin, xmax, ymax, src.transform)
 
-        band_means = []
-        for i in range(arr.shape[0]):
-            valid = arr[i][mask_valid[i]]
-            band_means.append(valid.mean() if valid.size > 0 else np.nan)
+    # อ่านค่าพิกเซลทุก band
+    dn_values = []
+    for b in range(1, src.count + 1):
+        band = src.read(b, window=window).astype(float)
+        # แปลง DN → Radiance (Gain * DN + Bias)
+        band_cal = band * gains[b] + bias[b]
+        # เก็บค่าเฉลี่ย
+        dn_values.append(np.nanmean(band_cal))
 
-        # DN → Radiance
-        band_names = ["blue", "green", "red", "nir"]
-        radiance = {b: band_means[i]*gains[b] + biases[b] for i, b in enumerate(band_names)}
-
-        return band_means, radiance
-
-# ---------------- Run ----------------
-tif_file = "your_image.tif"
-shapefile_path = "plot.shp"  # หรือ None ถ้าไม่มี
-
-dn_mean, radiance = mean_dn_whole_plot(tif_file, shapefile_path)
-
-print("ค่าเฉลี่ย DN ทั้งแปลง:", dn_mean)
-print("Radiance:", radiance)
+# ------------------------------
+# แสดงผลลัพธ์
+# ------------------------------
+print("ค่า DN เฉลี่ยทั้งแปลง (10m x 12m):")
+print(f"Blue : {dn_values[0]:.4f}")
+print(f"Green: {dn_values[1]:.4f}")
+print(f"Red  : {dn_values[2]:.4f}")
+print(f"NIR  : {dn_values[3]:.4f}")
