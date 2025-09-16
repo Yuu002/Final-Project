@@ -23,11 +23,17 @@ def get_band_means_zonal(tif_file, lon, lat, width=10, height=12):
 
         return dn_means
 
-# ---------------- Run ----------------
-tif_file = "IMAGERY.TIF"
-lon, lat = 99.31819, 18.11402
+# ---------------- Fixed GeoTIFF File ----------------
+tif_file = "IMAGERY.TIF"  # ใส่ไฟล์ GeoTIFF ตรงนี้
 
-dn_means = get_band_means_zonal(tif_file, lon, lat)
-print("ค่าเฉลี่ย DN ของแต่ละ band (10m x 12m):")
+# ---------------- กรอกพิกัดและขนาดพื้นที่ ----------------
+lon = float(input("กรอก Longitude: "))
+lat = float(input("กรอก Latitude: "))
+width = float(input("กรอกความกว้างพื้นที่ (เมตร): "))
+height = float(input("กรอกความสูงพื้นที่ (เมตร): "))
+
+dn_means = get_band_means_zonal(tif_file, lon, lat, width, height)
+
+print("\nค่าเฉลี่ย DN ของแต่ละ band:")
 for b, val in dn_means.items():
     print(f"{b.capitalize()}: {val:.2f}")
