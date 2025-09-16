@@ -1,29 +1,32 @@
 import rasterio
 import numpy as np
-from rasterio.windows import from_bounds
 from pyproj import Transformer
 
-def get_dn_window(tif_file, lon, lat, width=10, height=12):
+def get_dn_nearest_pixel(tif_file, lon, lat):
     with rasterio.open(tif_file) as src:
+        # แปลงพิกัด (lon, lat WGS84) → CRS ของภาพ (UTM Zone 47N)
         transformer = Transformer.from_crs("EPSG:4326", src.crs, always_xy=True)
         x, y = transformer.transform(lon, lat)
 
-        half_w, half_h = width/2, height/2
-        xmin, xmax = x - half_w, x + half_w
-        ymin, ymax = y - half_h, y + half_h
+        # หาตำแหน่ง row, col ของ pixel
+        row, col = src.index(x, y)
 
-        # window จาก bounding box
-        window = from_bounds(xmin, ymin, xmax, ymax, src.transform)
+        # อ่านค่า DN ทุก band ที่ pixel นั้น
+        dn_values = []
+        for b in range(1, src.count + 1):
+            arr = src.read(b)  # อ่านทั้ง band
+            dn_values.append(arr[row, col])
 
-        dn_means = []
-        for b in range(1, src.count+1):
-            arr = src.read(b, window=window).astype(float)
-            arr = arr[arr > 0]  # กำจัด nodata แบบง่าย ๆ
-            dn_means.append(arr.mean() if arr.size > 0 else np.nan)
+        # ชื่อแบนด์เรียงตาม DIMAP
+        band_names = ["blue", "green", "red", "nir"]
+        return dict(zip(band_names, dn_values))
 
-        return dict(zip(["blue", "green", "red", "nir"], dn_means))
-
-# ใช้งาน
+# ---------------- Run ----------------
 tif_file = "IMAGERY.TIF"
 lon, lat = 99.31819, 18.11402
-print(get_dn_window(tif_file, lon, lat))
+
+dn_pixel = get_dn_nearest_pixel(tif_file, lon, lat)
+
+print("ค่า DN จาก pixel ใกล้พิกัด:")
+for b, val in dn_pixel.items():
+    print(f"{b.capitalize()}: {val}")
