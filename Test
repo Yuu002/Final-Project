@@ -1,10 +1,7 @@
-Research Objectives
-	1.	To examine the relationship between vegetation indices derived from satellite imagery and aboveground biomass (AGB).
-	2.	To construct and compare AGB prediction models using both traditional statistical methods and machine learning techniques.
-	3.	To develop a web-based application that facilitates convenient, rapid, and user-friendly AGB prediction.
+Sample Group
 
-⸻
+This study employed satellite imagery covering Ko Kha District, Lampang Province. The dataset consisted of satellite image files and tabular data from 55 sampling locations, which served as the primary information for analysis and model construction (Wongchai, Insuan, & Promwungkwa, 2020).
 
-Research Hypotheses
-	1.	Vegetation indices derived from satellite imagery can be employed to predict aboveground biomass with greater accuracy and efficiency than relying solely on conventional field-based surveys.
-	2.	Machine learning models can provide superior predictive performance for aboveground biomass compared to basic statistical models.
+Research Variables
+	•	Independent variables: Five vegetation indices, namely NDVI, TNDVI, SR, SAVI, and MSAVI2.
+	•	Dependent variable: Aboveground biomass (AGB).
