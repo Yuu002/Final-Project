@@ -3,15 +3,18 @@ from rasterstats import zonal_stats
 from shapely.geometry import box, mapping
 from pyproj import Transformer
 
-def get_band_means_zonal(tif_file, lon, lat, width=10, height=12):
-    # เปิดไฟล์ raster
+def get_band_means_zonal(tif_file, lon, lat, width_m=10, height_m=12):
+    """
+    คำนวณค่าเฉลี่ย DN ของแต่ละ band ในพื้นที่สี่เหลี่ยมรอบพิกัด (lon, lat)
+    ขนาดพื้นที่กำหนดโดย width_m x height_m (เมตร)
+    """
     with rasterio.open(tif_file) as src:
-        # แปลงพิกัด WGS84 → CRS ของภาพ
+        # แปลงพิกัด WGS84 → CRS ของ raster
         transformer = Transformer.from_crs("EPSG:4326", src.crs, always_xy=True)
         x, y = transformer.transform(lon, lat)
 
-        # สร้าง polygon สี่เหลี่ยมรอบพิกัด (width x height)
-        half_w, half_h = width/2, height/2
+        # สร้าง polygon สี่เหลี่ยมรอบพิกัด
+        half_w, half_h = width_m/2, height_m/2
         rect = box(x - half_w, y - half_h, x + half_w, y + half_h)
 
         # คำนวณค่าเฉลี่ย per band
@@ -23,17 +26,13 @@ def get_band_means_zonal(tif_file, lon, lat, width=10, height=12):
 
         return dn_means
 
-# ---------------- Fixed GeoTIFF File ----------------
-tif_file = "IMAGERY.TIF"  # ใส่ไฟล์ GeoTIFF ตรงนี้
+# ---------------- Run ตัวอย่าง ----------------
+tif_file = "IMAGERY.TIF"
+lon, lat = 99.31819, 18.11402
 
-# ---------------- กรอกพิกัดและขนาดพื้นที่ ----------------
-lon = float(input("กรอก Longitude: "))
-lat = float(input("กรอก Latitude: "))
-width = float(input("กรอกความกว้างพื้นที่ (เมตร): "))
-height = float(input("กรอกความสูงพื้นที่ (เมตร): "))
+# ตัวอย่าง: กำหนดพื้นที่ 15m x 20m
+dn_means = get_band_means_zonal(tif_file, lon, lat, width_m=15, height_m=20)
 
-dn_means = get_band_means_zonal(tif_file, lon, lat, width, height)
-
-print("\nค่าเฉลี่ย DN ของแต่ละ band:")
+print("ค่าเฉลี่ย DN ของแต่ละ band:")
 for b, val in dn_means.items():
     print(f"{b.capitalize()}: {val:.2f}")
