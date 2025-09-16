@@ -1,78 +1,70 @@
 import rasterio
 import numpy as np
 from rasterio.mask import mask
-from pyproj import transform
+from pyproj import Transformer
 from shapely.geometry import box, mapping
+import math
 
-# ---------------- Function: ค่าเฉลี่ย DN แบบ window ----------------
-def values_from_window(src, lon, lat, window=1):
-    # แปลง lat/lon -> CRS ของภาพ
-    xs, ys = transform('EPSG:4326', src.crs, [lon], [lat])
-    x, y = xs[0], ys[0]
+# ---------------- Metadata ----------------
+gains = {
+    "blue": 1.46853,
+    "green": 1.50071,
+    "red": 1.71019,
+    "nir": 1.67119
+}
+biases = {
+    "blue": 0.0,
+    "green": 0.0,
+    "red": 0.0,
+    "nir": 0.0
+}
+sun_elevation = 44.344240  # degree
 
-    # หาตำแหน่ง pixel (row, col)
-    row, col = src.index(x, y)
+# ---------------- Function ----------------
+def get_reflectance_from_rectangle(tif_file, lon, lat, width=10, height=12):
+    with rasterio.open(tif_file) as src:
+        # แปลงพิกัด (lon, lat WGS84) → CRS ของภาพ (UTM Zone 47N)
+        transformer = Transformer.from_crs("EPSG:4326", src.crs, always_xy=True)
+        x, y = transformer.transform(lon, lat)
 
-    # สร้าง window
-    w = window
-    window_data = src.read(window=(col - w, row - w, col + w + 1, row + w + 1))
+        # สร้างกรอบสี่เหลี่ยมรอบพิกัด (10m x 12m)
+        half_w, half_h = width/2, height/2
+        rect = box(x - half_w, y - half_h, x + half_w, y + half_h)
 
-    # กำจัด nodata
-    nod = src.nodata
-    if nod is not None:
-        mask_valid = window_data != nod
-    else:
-        mask_valid = window_data > 0
+        # ตัดภาพตาม polygon
+        out_image, _ = mask(src, [mapping(rect)], crop=True)
+        arr = out_image.astype(np.float32)
 
-    band_means = []
-    for i in range(window_data.shape[0]):
-        valid = window_data[i][mask_valid[i]]
-        if valid.size == 0:
-            band_means.append(np.nan)
+        # กำจัด nodata
+        nod = src.nodata
+        if nod is not None:
+            mask_valid = arr != nod
         else:
-            band_means.append(valid.mean())
-    return np.array(band_means)
+            mask_valid = arr > 0
 
-# ---------------- Function: ค่าเฉลี่ย DN แบบ rectangle (พื้นที่จริง) ----------------
-def values_from_rectangle(src, lon, lat, width=10, height=12):
-    # แปลง lat/lon -> CRS ของภาพ
-    xs, ys = transform('EPSG:4326', src.crs, [lon], [lat])
-    x, y = xs[0], ys[0]
+        # ค่าเฉลี่ย DN ต่อ band
+        band_means = []
+        for i in range(arr.shape[0]):
+            valid = arr[i][mask_valid[i]]
+            band_means.append(valid.mean() if valid.size > 0 else np.nan)
 
-    # สร้าง polygon (rectangle) รอบจุด (centered) ขนาด width x height (เมตร)
-    half_w, half_h = width/2, height/2
-    rect = box(x - half_w, y - half_h, x + half_w, y + half_h)
+        # ชื่อแบนด์เรียงตาม DIMAP (Blue, Green, Red, NIR)
+        band_names = ["blue", "green", "red", "nir"]
 
-    # mask raster ด้วย polygon
-    out_image, out_transform = mask(src, [mapping(rect)], crop=True)
-    arr = out_image.astype(np.float32)
+        # DN → Radiance (DN * Gain + Bias)
+        radiance = {b: band_means[i] * gains[b] + biases[b] for i, b in enumerate(band_names)}
 
-    # กำจัด nodata
-    nod = src.nodata
-    if nod is not None:
-        mask_valid = arr != nod
-    else:
-        mask_valid = arr > 0
+        # Radiance → TOA Reflectance
+        toa_reflectance = {b: radiance[b] / math.sin(math.radians(sun_elevation)) for b in band_names}
 
-    # ค่าเฉลี่ย DN ต่อ band
-    band_means = []
-    for i in range(arr.shape[0]):
-        valid = arr[i][mask_valid[i]]
-        if valid.size == 0:
-            band_means.append(np.nan)
-        else:
-            band_means.append(valid.mean())
-    return np.array(band_means)
+        return band_means, radiance, toa_reflectance
 
-# ---------------- Example usage ----------------
+# ---------------- Run ----------------
 tif_file = "your_image.tif"
-lon, lat = 99.31819, 18.11402  # พิกัดตัวอย่าง
+lon, lat = 99.31819, 18.11402  # พิกัด
 
-with rasterio.open(tif_file) as src:
-    # 1) แบบ window
-    dn_window = values_from_window(src, lon, lat, window=1)
-    print("ค่าเฉลี่ย DN (3x3 window):", dn_window)
+dn_mean, radiance, reflectance = get_reflectance_from_rectangle(tif_file, lon, lat)
 
-    # 2) แบบ rectangle
-    dn_rect = values_from_rectangle(src, lon, lat, width=10, height=12)
-    print("ค่าเฉลี่ย DN (พื้นที่ 10x12 m):", dn_rect)
+print("ค่าเฉลี่ย DN (10m x 12m):", dn_mean)
+print("Radiance:", radiance)
+print("TOA Reflectance:", reflectance)
