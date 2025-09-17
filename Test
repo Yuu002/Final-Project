@@ -1,11 +1,98 @@
+# app.py
 import streamlit as st
 from streamlit_folium import st_folium
 import folium
+from folium.plugins import Draw
+import json
 
-st.title("🌿 Simple Map Example")
+st.set_page_config(layout="wide", page_title="Interactive Satellite Map")
 
-# กำหนดพิกัดกลางโลก (0,0) หรือใกล้ประเทศไทยก็ได้
-m = folium.Map(location=[15, 100], zoom_start=4)
+st.sidebar.title("Biomass Prediction Portal (Prototype)")
+st.sidebar.markdown("ตัวอย่างแผนที่: เลื่อน ซูม และวาดพื้นที่เพื่อดึงพิกัด")
 
-# แสดง map
-st_folium(m, width=700, height=500)
+# เลือก tile (satellite หรือ roadmap)
+tile_choice = st.sidebar.selectbox("เลือกแผนที่ (Tile)", (
+    "ESRI.WorldImagery (Satellite)",
+    "OpenStreetMap (Default)",
+    "Stamen Terrain"
+))
+
+# พิกัดเริ่มต้น (ประเทศไทย)
+start_coords = (13.5, 100.5)  # lat, lon
+zoom_start = st.sidebar.slider("Zoom เริ่มต้น", 3, 12, 6)
+
+# สร้าง folium map
+m = folium.Map(location=start_coords, zoom_start=zoom_start, control_scale=True, tiles=None)
+
+# เพิ่ม tile layer ตามการเลือก (ESRI WorldImagery ใช้ได้โดยไม่ต้องใช้ token)
+if tile_choice == "ESRI.WorldImagery (Satellite)":
+    folium.TileLayer(
+        tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+        attr="ESRI WorldImagery",
+        name="Satellite (ESRI)",
+        overlay=False,
+        control=True,
+    ).add_to(m)
+elif tile_choice == "OpenStreetMap (Default)":
+    folium.TileLayer("OpenStreetMap", name="OpenStreetMap").add_to(m)
+else:
+    folium.TileLayer("Stamen Terrain", name="Stamen Terrain").add_to(m)
+
+# เพิ่ม layer control ให้เลือก tile ได้
+folium.LayerControl().add_to(m)
+
+# เพิ่มเครื่องมือวาด (Draw)
+draw = Draw(
+    export=True,
+    filename='data.geojson',
+    position="topleft",
+    draw_options={
+        'polyline': False,
+        'rectangle': True,
+        'polygon': True,
+        'circle': False,
+        'marker': False,
+        'circlemarker': False,
+    },
+    edit_options={'edit': True}
+)
+draw.add_to(m)
+
+# แสดงแผนที่ด้วย streamlit_folium
+st.write("### แผนที่ — ลองเลื่อน/ซูม แล้วใช้เครื่องมือวาด (ซ้ายบน) เพื่อเลือกพื้นที่")
+map_data = st_folium(m, width=1000, height=700)
+
+# map_data จะเก็บผลการวาด (geojson) เมื่อผู้ใช้กด Export หรือวาดแล้ว
+st.write("---")
+st.write("### ผลการวาด / ข้อมูลพื้นที่ที่ได้ (ถ้ามี)")
+if map_data and "all_drawings" in map_data and map_data["all_drawings"]:
+    # all_drawings เป็น list ของวัตถุ GeoJSON ที่วาด
+    drawings = map_data["all_drawings"]
+    st.success(f"พบ {len(drawings)} ไอเท็มที่วาด")
+    for i, d in enumerate(drawings):
+        st.write(f"**วัตถุที่ {i+1}**")
+        st.json(d)
+        # ถ้าต้องการดึง bounding box (min lon, min lat, max lon, max lat)
+        try:
+            geom = d.get("geometry", {})
+            coords = geom.get("coordinates", [])
+            # polygon: coords[0] คือ exterior ring
+            if geom.get("type") == "Polygon":
+                xs = [c[0] for c in coords[0]]
+                ys = [c[1] for c in coords[0]]
+                min_lon, max_lon = min(xs), max(xs)
+                min_lat, max_lat = min(ys), max(ys)
+                st.write(f"Bounds (lat_min, lat_max, lon_min, lon_max): {min_lat:.6f}, {max_lat:.6f}, {min_lon:.6f}, {max_lon:.6f}")
+            elif geom.get("type") == "Rectangle" or geom.get("type") == "Polygon":
+                st.write("เป็น polygon/rectangle")
+            else:
+                st.write("Geometry type:", geom.get("type"))
+        except Exception as e:
+            st.write("ไม่สามารถดึง bounds ได้:", e)
+else:
+    st.info("ยังไม่มีการวาดพื้นที่ — ใช้เครื่องมือวาดที่มุมบนซ้ายของแผนที่เพื่อสร้างพื้นที่")
+
+# ตัวอย่าง: ถ้าต้องการให้ผู้ใช้ดาวน์โหลด geojson ที่วาด
+if map_data and "all_drawings" in map_data and map_data["all_drawings"]:
+    geojson_str = json.dumps({"type":"FeatureCollection", "features": map_data["all_drawings"]})
+    st.download_button("ดาวน์โหลด GeoJSON ของพื้นที่ที่วาด", data=geojson_str, file_name="selection.geojson", mime="application/json")
