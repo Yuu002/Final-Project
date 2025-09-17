@@ -1,61 +1,14 @@
 import streamlit as st
 from streamlit_folium import st_folium
 import folium
-import datetime
-import ee
 
-# -------------------------
-# 1) Initialize Earth Engine
-# -------------------------
-try:
-    ee.Initialize()
-except Exception as e:
-    st.error("ยังไม่ได้ authenticate กับ Google Earth Engine")
-    st.stop()
-
-# -------------------------
-# 2) UI - Date Picker
-# -------------------------
 st.set_page_config(layout="wide")
-st.sidebar.title("🌍 Sentinel-2 Viewer")
-date_selected = st.sidebar.date_input(
-    "เลือกวันที่ (date)",
-    datetime.date(2025, 1, 1)
-)
-date_str = date_selected.strftime("%Y-%m-%d")
+st.title("🌍 แผนที่ภาพจริง (Esri Satellite)")
 
-st.sidebar.write("วันที่ที่เลือก:", date_str)
+# พิกัดเริ่มต้น (ประเทศไทย)
+m = folium.Map(location=[15.87, 100.99], zoom_start=6)
 
-# -------------------------
-# 3) Function - Get Sentinel-2 Image
-# -------------------------
-def sentinel2_image_for_date(date, bbox):
-    start = ee.Date(date)
-    end = start.advance(1, 'day')
-    window_start = start.advance(-3, 'day')
-    window_end = start.advance(3, 'day')
-
-    col = (ee.ImageCollection('COPERNICUS/S2_SR')
-           .filterDate(window_start, window_end)
-           .filterBounds(ee.Geometry.Rectangle(bbox))
-           .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 50))
-           .sort('CLOUDY_PIXEL_PERCENTAGE'))
-
-    first = col.first()
-    if first:
-        img = ee.Image(first)
-    else:
-        img = col.median()
-
-    return img.select(['B4','B3','B2'])  # RGB
-
-# -------------------------
-# 4) Create Map
-# -------------------------
-start_coords = (13.5, 100.5)  # Thailand center
-m = folium.Map(location=start_coords, zoom_start=6, tiles=None, control_scale=True)
-
-# Base map - ESRI
+# เพิ่มแผนที่ Esri World Imagery (ภาพจริง)
 folium.TileLayer(
     tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
     attr="Esri World Imagery",
@@ -64,25 +17,12 @@ folium.TileLayer(
     control=True
 ).add_to(m)
 
-# Overlay - Sentinel-2 for selected date
-bbox = [97.0, 5.0, 106.5, 21.5]  # Thailand bounding box
-img = sentinel2_image_for_date(date_str, bbox)
-vis_params = {'min': 0, 'max': 3000, 'bands': ['B4','B3','B2']}
-mapid = img.getMapId(vis_params)
-tile_url = mapid['tile_fetcher'].url_format
-
-folium.TileLayer(
-    tiles=tile_url,
-    attr="Sentinel-2 via GEE",
-    name=f"Sentinel-2 {date_str}",
-    overlay=True,
-    control=True
+# Marker ตัวอย่าง
+folium.Marker(
+    [13.7563, 100.5018],  # Bangkok
+    popup="กรุงเทพฯ (Bangkok)",
+    tooltip="คลิกดูข้อมูล"
 ).add_to(m)
 
-folium.LayerControl().add_to(m)
-
-# -------------------------
-# 5) Show Map
-# -------------------------
-st.write(f"### Sentinel-2 overlay on ESRI basemap ({date_str})")
-st_folium(m, width=1000, height=700)
+# แสดงใน Streamlit
+st_folium(m, width=1200, height=700)
