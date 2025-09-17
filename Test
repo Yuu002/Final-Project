@@ -3,22 +3,51 @@ import streamlit as st
 from streamlit_folium import st_folium
 import folium
 from folium.plugins import Draw
-import datetime
-import os
+import datetime, joblib
+import ee
+import numpy as np
 
-st.set_page_config(layout="wide", page_title="Hybrid Map: ESRI + NDVI Overlay")
+# -------------------------
+# 1) Authenticate & Init EE
+# -------------------------
+# ถ้าเป็นเครื่อง dev: ให้รัน ee.Authenticate() ครั้งเดียวใน shell/interactive
+# แล้ว ee.Initialize() ในโค้ดนี้
+#
+# สำหรับ server production ให้ใช้ service account key:
+# credentials = ee.ServiceAccountCredentials('your-service-account@project.iam.gserviceaccount.com', 'path/to/key.json')
+# ee.Initialize(credentials)
+try:
+    ee.Initialize()
+except Exception as e:
+    st.error("Earth Engine неได้ initialize. ถ้ายังไม่เคย Authenticate ให้รัน ee.Authenticate() ที่เครื่อง dev แล้วลองอีกครั้ง.")
+    st.stop()
 
-st.sidebar.title("Biomass Prediction Portal (Prototype)")
-st.sidebar.markdown("เลือกวัน/เดือน/ปี เพื่อเปลี่ยน Overlay (NDVI/AGB)")
+# -------------------------
+# 2) Load your ML model (example)
+# -------------------------
+# สมมติ model รับ input [R,G,B,NIR] (ค่าเป็น reflectance scale ที่ model คาดหวัง)
+# เปลี่ยน path เป็นของคุณ
+try:
+    model = joblib.load("model.pkl")
+except Exception:
+    model = None
+    st.warning("ไม่พบ model.pkl — placeholder จะยังทำงานแค่ดึง band เท่านั้น")
 
-# --- Widget เลือกวัน
-date_selected = st.sidebar.date_input("เลือกวันที่", datetime.date(2025, 1, 1))
+# -------------------------
+# 3) UI
+# -------------------------
+st.set_page_config(layout="wide")
+st.sidebar.title("Biomass Portal (Prototype)")
+date_selected = st.sidebar.date_input("เลือกวันที่ (date)", datetime.date(2025,1,1))
 date_str = date_selected.strftime("%Y-%m-%d")
+st.sidebar.write("วันที่:", date_str)
 
-# --- Base map (ESRI imagery)
+# -------------------------
+# 4) Prepare map (ESRI base)
+# -------------------------
 start_coords = (13.5, 100.5)
-m = folium.Map(location=start_coords, zoom_start=6, control_scale=True, tiles=None)
-
+m = folium.Map(location=start_coords, zoom_start=6, tiles=None, control_scale=True)
+# Base map: ESRI World Imagery (ชัด)
 folium.TileLayer(
     tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
     attr="Esri World Imagery",
@@ -27,58 +56,102 @@ folium.TileLayer(
     control=True
 ).add_to(m)
 
-folium.TileLayer("OpenStreetMap", name="OpenStreetMap").add_to(m)
+# -------------------------
+# 5) Get Sentinel-2 image from GEE for the date (with cloud filter fallback)
+# -------------------------
+def sentinel2_image_for_date(date, bbox):
+    # bbox = [lon_min, lat_min, lon_max, lat_max] หรือใช้ whole world
+    start = ee.Date(date)
+    end = start.advance(1, 'day')
+    # widen window for fallback (±3 days)
+    window_start = start.advance(-3, 'day')
+    window_end = start.advance(3, 'day')
 
-# --- Overlay (ตัวอย่าง: NDVI PNG ไฟล์ที่เตรียมไว้)
-# Path ตัวอย่าง: ./data/ndvi_YYYY-MM-DD.png
-overlay_path = f"data/ndvi_{date_str}.png"
+    col = (ee.ImageCollection('COPERNICUS/S2_SR')
+           .filterDate(window_start, window_end)
+           .filterBounds(ee.Geometry.Rectangle(bbox))
+           .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 60)))  # relax, we'll sort below
 
-if os.path.exists(overlay_path):
-    # Bounding box (ต้องเป็นพิกัดจริงของภาพที่คุณมี: [south, west, north, east])
-    bounds = [[5, 97], [21, 106]]  # ตัวอย่างครอบประเทศไทย
-    folium.raster_layers.ImageOverlay(
-        name=f"NDVI {date_str}",
-        image=overlay_path,
-        bounds=bounds,
-        opacity=0.6,
-        interactive=True,
-        cross_origin=False,
-        zindex=1,
-    ).add_to(m)
-else:
-    st.warning(f"ไม่มีไฟล์ overlay สำหรับ {date_str}")
+    # if empty, fallback to a median composite in window
+    # choose least cloudy image
+    col_sorted = col.sort('CLOUDY_PIXEL_PERCENTAGE')
+    first = ee.Image(col_sorted.first())
+    # If first is empty we will produce a median composite
+    # We'll create a combined image that picks 'first' if exists else median
+    median = col.median()
+    img = ee.Algorithms.If(first, first, median)
+    img = ee.Image(img).select(['B4','B3','B2','B8'])  # R,G,B,NIR
+    return img
 
-# --- Layer control
+# bbox: small box that covers Thailand (or adapt to your AOI)
+bbox = [97.0, 5.0, 106.5, 21.5]
+img = sentinel2_image_for_date(date_str, bbox)
+
+# Visualization params and add as tile layer
+vis_params = {'min': 0, 'max': 3000, 'bands': ['B4','B3','B2']}  # Sentinel-2 scale L2A ~ 0-3000 typical
+mapid = ee.Image(img).getMapId(vis_params)
+tile_url = mapid['tile_fetcher'].url_format
+
+folium.TileLayer(tiles=tile_url, attr="Sentinel-2 (GEE)", name=f"S2 {date_str}", overlay=True, control=True).add_to(m)
+
+# Add Draw & Layer controls
 folium.LayerControl().add_to(m)
-
-# --- Draw tools
-draw = Draw(
-    export=True,
-    position="topleft",
-    draw_options={
-        'polyline': False,
-        'rectangle': True,
-        'polygon': True,
-        'circle': False,
-        'marker': False,
-        'circlemarker': False,
-    },
-    edit_options={'edit': True}
-)
+draw = Draw(export=True, position="topleft", draw_options={'rectangle':True,'polygon':True,'polyline':False,'marker':False,'circle':False}, edit_options={'edit':True})
 draw.add_to(m)
 
-# --- Show map
-st.write(f"### Hybrid Map — Base: Esri, Overlay: NDVI ({date_str})")
+# -------------------------
+# 6) Render map in Streamlit
+# -------------------------
+st.write(f"### Map — Sentinel-2 overlay ({date_str}) on ESRI basemap")
 map_data = st_folium(m, width=1000, height=700)
 
-# --- Draw results
-st.write("---")
-st.write("### ผลการวาด / ข้อมูลพื้นที่")
-if map_data and "all_drawings" in map_data and map_data["all_drawings"]:
-    drawings = map_data["all_drawings"]
-    st.success(f"พบ {len(drawings)} พื้นที่ที่วาด")
-    for i, d in enumerate(drawings):
-        st.write(f"**พื้นที่ {i+1}**")
-        st.json(d)
-else:
-    st.info("ยังไม่มีการวาดพื้นที่")
+# -------------------------
+# 7) On click: sample pixel bands and call model
+# -------------------------
+if map_data:
+    last_click = map_data.get("last_clicked")
+    if last_click:
+        lon = last_click['lng']
+        lat = last_click['lat']
+        st.write("Clicked:", lat, lon)
+
+        # sample single pixel (scale = 10 m for S2)
+        point = ee.Geometry.Point(lon, lat)
+        sample = img.reduceRegion(reducer=ee.Reducer.first(), geometry=point, scale=10)
+        try:
+            sample_dict = sample.getInfo()  # synchronous; okay for single pixel
+            # keys are B4,B3,B2,B8 (note: may be None if masked/cloud)
+            r = sample_dict.get('B4')
+            g = sample_dict.get('B3')
+            b = sample_dict.get('B2')
+            nir = sample_dict.get('B8')
+            st.write("Raw bands (Sentinel-2 scale):", {"R": r, "G": g, "B": b, "NIR": nir})
+
+            # --- Preprocess to model's expected input ---
+            # Example: S2 L2A are scaled reflectance ~0-10000; if model expects 0-1:
+            def to_reflectance(v):
+                return None if v is None else float(v) / 10000.0
+
+            r_sc, g_sc, b_sc, nir_sc = map(to_reflectance, (r,g,b,nir))
+            st.write("Scaled to [0-1] (example):", {"R": r_sc, "G": g_sc, "B": b_sc, "NIR": nir_sc})
+
+            # --- Call your model (example) ---
+            if model is not None:
+                # ensure input shape matches model expectation
+                X = np.array([[r_sc, g_sc, b_sc, nir_sc]])
+                pred = model.predict(X)
+                st.success(f"Model output: {pred}")
+            else:
+                st.info("Model not loaded — only showing band values.")
+        except Exception as e:
+            st.error("ไม่สามารถดึงค่า pixel: " + str(e))
+
+# -------------------------
+# 8) Notes and caveats
+# -------------------------
+st.markdown("""
+**หมายเหตุสำคัญ**
+- Sentinel-2 values อาจถูก masked (เมฆ) → ถ้าค่าเป็น None ให้พิจารณาเลื่อนวัน หรือใช้ composite (median) ในช่วง ±x วัน  
+- `sample.getInfo()` เป็น synchronous call — ดีสำหรับ single-point interactive แต่ไม่เหมาะกับ batch/จำนวนมาก  
+- สำหรับ patch (ภาพย่อย) เพื่อให้ model ต้องการรูปขนาด (เช่น 64x64) ให้ใช้ `sampleRectangle` หรือ export ภูมิภาคจาก EE แล้วดาวน์โหลดเป็น GeoTIFF -> load เป็น numpy array -> ส่งให้ model
+""")
