@@ -4,44 +4,46 @@ from streamlit_folium import st_folium
 import folium
 from folium.plugins import Draw
 import json
+import datetime
 
-st.set_page_config(layout="wide", page_title="Interactive Satellite Map")
+st.set_page_config(layout="wide", page_title="Interactive Satellite Map with Date")
 
 st.sidebar.title("Biomass Prediction Portal (Prototype)")
-st.sidebar.markdown("ตัวอย่างแผนที่: เลื่อน ซูม และวาดพื้นที่เพื่อดึงพิกัด")
+st.sidebar.markdown("เลือกวัน/เดือน/ปี เพื่อเปลี่ยนภาพดาวเทียม")
 
-# เลือก tile (satellite หรือ roadmap)
-tile_choice = st.sidebar.selectbox("เลือกแผนที่ (Tile)", (
-    "ESRI.WorldImagery (Satellite)",
-    "OpenStreetMap (Default)",
-    "Stamen Terrain"
-))
+# --- Widget เลือกวัน/เดือน/ปี
+date_selected = st.sidebar.date_input(
+    "เลือกวันที่",
+    datetime.date(2025, 1, 1)  # ค่าเริ่มต้น
+)
+date_str = date_selected.strftime("%Y-%m-%d")
 
-# พิกัดเริ่มต้น (ประเทศไทย)
-start_coords = (13.5, 100.5)  # lat, lon
+# --- พิกัดเริ่มต้น
+start_coords = (13.5, 100.5)  # Thailand
 zoom_start = st.sidebar.slider("Zoom เริ่มต้น", 3, 12, 6)
 
-# สร้าง folium map
+# --- สร้าง folium map
 m = folium.Map(location=start_coords, zoom_start=zoom_start, control_scale=True, tiles=None)
 
-# เพิ่ม tile layer ตามการเลือก (ESRI WorldImagery ใช้ได้โดยไม่ต้องใช้ token)
-if tile_choice == "ESRI.WorldImagery (Satellite)":
-    folium.TileLayer(
-        tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-        attr="ESRI WorldImagery",
-        name="Satellite (ESRI)",
-        overlay=False,
-        control=True,
-    ).add_to(m)
-elif tile_choice == "OpenStreetMap (Default)":
-    folium.TileLayer("OpenStreetMap", name="OpenStreetMap").add_to(m)
-else:
-    folium.TileLayer("Stamen Terrain", name="Stamen Terrain").add_to(m)
+# --- เพิ่มชั้นภาพดาวเทียมจาก NASA GIBS (MODIS True Color)
+# URL pattern: https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/MODIS_Terra_CorrectedReflectance_TrueColor/default/{date}/GoogleMapsCompatible_Level9/{z}/{y}/{x}.jpg
+tile_url = f"https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/MODIS_Terra_CorrectedReflectance_TrueColor/default/{date_str}/GoogleMapsCompatible_Level9/{{z}}/{{y}}/{{x}}.jpg"
 
-# เพิ่ม layer control ให้เลือก tile ได้
+folium.TileLayer(
+    tiles=tile_url,
+    attr="NASA GIBS MODIS",
+    name=f"MODIS TrueColor {date_str}",
+    overlay=False,
+    control=True,
+).add_to(m)
+
+# เพิ่ม OSM ไว้เลือกเปรียบเทียบ
+folium.TileLayer("OpenStreetMap", name="OpenStreetMap").add_to(m)
+
+# --- Layer control
 folium.LayerControl().add_to(m)
 
-# เพิ่มเครื่องมือวาด (Draw)
+# --- Draw tools
 draw = Draw(
     export=True,
     filename='data.geojson',
@@ -58,41 +60,18 @@ draw = Draw(
 )
 draw.add_to(m)
 
-# แสดงแผนที่ด้วย streamlit_folium
-st.write("### แผนที่ — ลองเลื่อน/ซูม แล้วใช้เครื่องมือวาด (ซ้ายบน) เพื่อเลือกพื้นที่")
+# --- แสดงแผนที่
+st.write(f"### แผนที่ — NASA MODIS True Color ({date_str})")
 map_data = st_folium(m, width=1000, height=700)
 
-# map_data จะเก็บผลการวาด (geojson) เมื่อผู้ใช้กด Export หรือวาดแล้ว
+# --- ผลลัพธ์การวาด
 st.write("---")
-st.write("### ผลการวาด / ข้อมูลพื้นที่ที่ได้ (ถ้ามี)")
+st.write("### ผลการวาด / ข้อมูลพื้นที่ที่ได้")
 if map_data and "all_drawings" in map_data and map_data["all_drawings"]:
-    # all_drawings เป็น list ของวัตถุ GeoJSON ที่วาด
     drawings = map_data["all_drawings"]
     st.success(f"พบ {len(drawings)} ไอเท็มที่วาด")
     for i, d in enumerate(drawings):
         st.write(f"**วัตถุที่ {i+1}**")
         st.json(d)
-        # ถ้าต้องการดึง bounding box (min lon, min lat, max lon, max lat)
-        try:
-            geom = d.get("geometry", {})
-            coords = geom.get("coordinates", [])
-            # polygon: coords[0] คือ exterior ring
-            if geom.get("type") == "Polygon":
-                xs = [c[0] for c in coords[0]]
-                ys = [c[1] for c in coords[0]]
-                min_lon, max_lon = min(xs), max(xs)
-                min_lat, max_lat = min(ys), max(ys)
-                st.write(f"Bounds (lat_min, lat_max, lon_min, lon_max): {min_lat:.6f}, {max_lat:.6f}, {min_lon:.6f}, {max_lon:.6f}")
-            elif geom.get("type") == "Rectangle" or geom.get("type") == "Polygon":
-                st.write("เป็น polygon/rectangle")
-            else:
-                st.write("Geometry type:", geom.get("type"))
-        except Exception as e:
-            st.write("ไม่สามารถดึง bounds ได้:", e)
 else:
-    st.info("ยังไม่มีการวาดพื้นที่ — ใช้เครื่องมือวาดที่มุมบนซ้ายของแผนที่เพื่อสร้างพื้นที่")
-
-# ตัวอย่าง: ถ้าต้องการให้ผู้ใช้ดาวน์โหลด geojson ที่วาด
-if map_data and "all_drawings" in map_data and map_data["all_drawings"]:
-    geojson_str = json.dumps({"type":"FeatureCollection", "features": map_data["all_drawings"]})
-    st.download_button("ดาวน์โหลด GeoJSON ของพื้นที่ที่วาด", data=geojson_str, file_name="selection.geojson", mime="application/json")
+    st.info("ยังไม่มีการวาดพื้นที่ — ใช้เครื่องมือวาดที่มุมบนซ้ายของแผนที่")
