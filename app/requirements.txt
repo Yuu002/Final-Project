@@ -8,11 +8,11 @@ plotly
 scikit-learn
 openpyxl
 matplotlib
-tensorflow
 shapely
 rasterstats
 streamlit_folium
 folium
 ee
 windows_curses
+tempfile
 geemap
