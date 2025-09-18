@@ -12,8 +12,5 @@ shapely
 rasterstats
 streamlit_folium
 folium
-ee
-windows_curses
-tempfile
 geemap
-tenseflow
+tensotflow
