@@ -89,11 +89,12 @@ with col_right:
             st.error("AGB model not loaded")
         else:
             try:
+                # --- ใช้ path แบบเดียวกับ svr ---
                 bands_dict, indices_dict = compute_bands_and_indices_sklearn(
                     raster_path, lat, lon,
-                    model_path="mlp_model.pkl",
-                    scaler_X_path="scaler_X.save",
-                    scaler_y_path="scaler_y.save"
+                    model_path=BASE_PATH / "mlp_model.pkl",
+                    scaler_X_path=BASE_PATH / "scaler_X.save",
+                    scaler_y_path=BASE_PATH / "scaler_y.save"
                 )
 
                 st.subheader("📊 Predicted Bands")
@@ -113,4 +114,3 @@ with col_right:
             except Exception as e:
 
                 st.error(f"Error predicting AGB: {e}")
-
