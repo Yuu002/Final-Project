@@ -13,10 +13,14 @@ st.set_page_config(page_title="AGB Predictor", layout="wide")
 st.title("🌿 AGB Prediction from Satellite Image")
 
 # --- Load AGB model ---
+# --- Load AGB model ---
+from pathlib import Path
+
 try:
-    model_agb = joblib.load("svr_agb_model.pkl")
-except:
-    st.error("Cannot load AGB model svr_agb_model.pkl")
+    model_path = Path(__file__).parent / "svr_agb_model.pkl"
+    model_agb = joblib.load(model_path)
+except Exception as e:
+    st.error(f"Cannot load AGB model: {e}")
     model_agb = None
 
 # --- Two columns ---
@@ -109,3 +113,4 @@ with col_right:
             except Exception as e:
 
                 st.error(f"Error predicting AGB: {e}")
+
