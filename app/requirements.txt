@@ -10,7 +10,4 @@ openpyxl
 matplotlib
 shapely
 rasterstats
-streamlit_folium
 folium
-geemap
-tensotflow
