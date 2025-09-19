@@ -8,16 +8,17 @@ import numpy as np
 import matplotlib.pyplot as plt
 from pyproj import Transformer
 from bands_indices import compute_bands_and_indices_sklearn
+from pathlib import Path
 
 st.set_page_config(page_title="AGB Predictor", layout="wide")
 st.title("🌿 AGB Prediction from Satellite Image")
 
-# --- Load AGB model ---
-# --- Load AGB model ---
-from pathlib import Path
+# --- Base path (folder ของไฟล์ app.py) ---
+BASE_PATH = Path(__file__).parent
 
+# --- Load AGB model ---
 try:
-    model_path = Path(__file__).parent / "svr_agb_model.pkl"
+    model_path = BASE_PATH / "svr_agb_model.pkl"
     model_agb = joblib.load(model_path)
 except Exception as e:
     st.error(f"Cannot load AGB model: {e}")
@@ -112,5 +113,4 @@ with col_right:
                 st.markdown(f"<h2 style='color:green;font-size:30px;'>{agb_pred:.3f}</h2>", unsafe_allow_html=True)
 
             except Exception as e:
-
                 st.error(f"Error predicting AGB: {e}")
