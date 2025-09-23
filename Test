@@ -1,48 +1,37 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Satellite Map with Province Borders</title>
+    <title>AGB + Basemap Example</title>
     <meta charset="utf-8" />
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <style>
-        #map { height: 600px; width: 100%; margin-top: 10px; }
-        body { font-family: Arial, sans-serif; padding: 10px; }
+        #map { height: 600px; width: 100%; }
     </style>
 </head>
 <body>
-    <h3>Satellite Map Viewer</h3>
-    <label for="datePicker">Select Date: </label>
-    <input type="date" id="datePicker" value="2025-09-23">
-
+    <h3>AGB Map + Basemap</h3>
     <div id="map"></div>
 
     <script>
-        // สร้าง map
         var map = L.map('map').setView([13.7367, 100.5231], 6);
 
-        // Satellite basemap (ESRI World Imagery)
-        var satelliteLayer = L.tileLayer(
-            'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', 
-            { attribution: 'Tiles &copy; Esri', maxZoom: 19 }
+        // Basemap: Satellite
+        var basemap = L.tileLayer(
+            'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+            { attribution: 'Esri', maxZoom: 19 }
         ).addTo(map);
 
-        // GeoJSON provinces (ตัวอย่างใช้ URL ของ Natural Earth)
-        fetch('https://raw.githubusercontent.com/datasets/geo-boundaries-world-110m/master/countries.geojson')
-        .then(response => response.json())
-        .then(data => {
-            L.geoJSON(data, { 
-                style: { color: 'red', weight: 1, fill: false } 
-            }).addTo(map);
-        });
+        // AGB overlay (ตัวอย่างเป็น semi-transparent tile layer)
+        var agbLayer = L.tileLayer(
+            'https://your-server.com/agb_tiles/{z}/{x}/{y}.png', // ใส่ URL ของ AGB tile
+            { opacity: 0.6, attribution: 'AGB Data' }
+        ).addTo(map);
 
-        // Date picker event
-        document.getElementById("datePicker").addEventListener("change", function() {
-            var selectedDate = this.value;
-            console.log("Selected date:", selectedDate);
-            // ปัจจุบันยังไม่ได้เปลี่ยนภาพจริง
-            // ต่อไปสามารถ fetch backend / tile layer ตามวันที่นี้
-        });
+        // Optional: Layer control
+        var baseMaps = { "Basemap": basemap };
+        var overlayMaps = { "AGB": agbLayer };
+        L.control.layers(baseMaps, overlayMaps).addTo(map);
     </script>
 </body>
 </html>
