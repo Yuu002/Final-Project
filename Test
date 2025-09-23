@@ -1,28 +1,30 @@
-import streamlit as st
-from streamlit_folium import st_folium
-import folium
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Satellite Map Demo</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <style>
+    #map { height: 100vh; width: 100%; }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
 
-st.set_page_config(layout="wide")
-st.title("🌍 แผนที่ภาพจริง (Esri Satellite)")
+  <!-- Leaflet JS -->
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+  <script>
+    // สร้างแผนที่ตั้งต้น (ประเทศไทย)
+    var map = L.map('map').setView([15.8700, 100.9925], 6);
 
-# พิกัดเริ่มต้น (ประเทศไทย)
-m = folium.Map(location=[15.87, 100.99], zoom_start=6)
-
-# เพิ่มแผนที่ Esri World Imagery (ภาพจริง)
-folium.TileLayer(
-    tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-    attr="Esri World Imagery",
-    name="Esri Satellite",
-    overlay=False,
-    control=True
-).add_to(m)
-
-# Marker ตัวอย่าง
-folium.Marker(
-    [13.7563, 100.5018],  # Bangkok
-    popup="กรุงเทพฯ (Bangkok)",
-    tooltip="คลิกดูข้อมูล"
-).add_to(m)
-
-# แสดงใน Streamlit
-st_folium(m, width=1200, height=700)
+    // เพิ่มเลเยอร์ภาพดาวเทียม (Esri World Imagery)
+    L.tileLayer(
+      'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+      {
+        attribution: 'Tiles © Esri'
+      }).addTo(map);
+  </script>
+</body>
+</html>
