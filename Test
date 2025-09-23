@@ -1,44 +1,48 @@
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Satellite Map Viewer</title>
-    <meta charset="utf-8" />
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-</head>
-<body>
-    <h3>Satellite Map Viewer</h3>
-    <label for="datePicker">Select Date: </label>
-    <input type="date" id="datePicker" value="2025-09-23">
+// App.js
+import React, { useState } from 'react';
+import { MapContainer, TileLayer, GeoJSON } from 'react-leaflet';
+import 'leaflet/dist/leaflet.css';
+import provincesData from './provinces.json'; // GeoJSON ของจังหวัด/รัฐ
 
-    <div id="map" style="width: 100%; height: 600px;"></div>
+function App() {
+  const [selectedDate, setSelectedDate] = useState('2025-09-23');
 
-    <script>
-        // สร้าง map
-        var map = L.map('map').setView([13.7367, 100.5231], 6);
+  const handleDateChange = (e) => {
+    setSelectedDate(e.target.value);
+    console.log('Selected date:', e.target.value);
+    // ต่อไปสามารถ fetch tile layer / backend ตามวันที่นี้
+  };
 
-        // ใส่ base map OpenStreetMap
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            attribution: 'OSM'
-        }).addTo(map);
+  const geoStyle = {
+    color: 'red',
+    weight: 1,
+    fill: false,
+  };
 
-        // layer สำหรับ satellite
-        var satelliteLayer = L.tileLayer('https://tiles.maps.eox.at/wmts/1.0.0/sentinel-2/{z}/{x}/{y}.png', {
-            attribution: 'Sentinel-2 © EOX',
-            maxZoom: 19
-        }).addTo(map);
+  return (
+    <div>
+      <h2>Satellite Map Viewer</h2>
+      <label htmlFor="datePicker">Select Date: </label>
+      <input
+        type="date"
+        id="datePicker"
+        value={selectedDate}
+        onChange={handleDateChange}
+      />
 
-        // ฟังก์ชัน update map (ตอนนี้ยังเป็น placeholder)
-        function updateMap(date) {
-            console.log("Selected date:", date);
-            // ปัจจุบันยังใช้ latest tile layer
-            // ต่อไปสามารถเปลี่ยนเป็น fetch จาก backend/GEE ได้
-        }
+      <MapContainer center={[13.7367, 100.5231]} zoom={6} style={{ height: '600px', marginTop: '10px' }}>
+        {/* Satellite Basemap */}
+        <TileLayer
+          url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+          attribution="Tiles &copy; Esri"
+          maxZoom={19}
+        />
 
-        // event เมื่อเปลี่ยนวัน
-        document.getElementById("datePicker").addEventListener("change", function() {
-            updateMap(this.value);
-        });
-    </script>
-</body>
-</html>
+        {/* Province / State Borders */}
+        <GeoJSON data={provincesData} style={geoStyle} />
+      </MapContainer>
+    </div>
+  );
+}
+
+export default App;
