@@ -1,66 +1,72 @@
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from shapely.geometry import shape, mapping
-import planetary_computer as pc
-from pystac_client import Client
-import rasterio
-import numpy as np
-import tempfile
-import requests
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Satellite Crop + Bands</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
+<style>#map { height:600px; }</style>
+</head>
+<body>
+<h3>Satellite Crop + Bands</h3>
+<label>Date: <input type="date" id="datePicker" value="2025-09-23"></label>
+<div id="map"></div>
+<pre id="output"></pre>
 
-app = FastAPI()
+<script>
+var map = L.map('map').setView([13.7367, 100.5231], 10);
 
-# allow frontend
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+// Satellite only
+var satLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+  attribution: 'Esri Satellite'
+}).addTo(map);
 
-# request model
-class CropRequest(BaseModel):
-    polygon: dict  # GeoJSON polygon
-    date: str      # YYYY-MM-DD
+// Boundaries overlay
+var boundaryLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  attribution: 'OSM Boundaries'
+});
 
-@app.post("/get_bands")
-def get_bands(req: CropRequest):
-    try:
-        stac_api = Client.open("https://planetarycomputer.microsoft.com/api/stac/v1")
-        geom = shape(req.polygon)
-        minx, miny, maxx, maxy = geom.bounds
+// Layer toggle
+var baseMaps = {
+  "Satellite Only": satLayer,
+  "Satellite + Boundaries": L.layerGroup([satLayer, boundaryLayer])
+};
+L.control.layers(baseMaps).addTo(map);
 
-        # search Sentinel-2 L2A
-        search = stac_api.search(
-            collections=["sentinel-2-l2a"],
-            bbox=[minx, miny, maxx, maxy],
-            datetime=f"{req.date}T00:00:00Z/{req.date}T23:59:59Z",
-            max_items=1
-        )
-        items = list(search.get_items())
-        if not items:
-            return {"error":"No image found for this date"}
-        item = items[0]
+// Draw polygon
+var drawnItems = new L.FeatureGroup();
+map.addLayer(drawnItems);
+var drawControl = new L.Control.Draw({ draw: { polygon: true }, edit: { featureGroup: drawnItems } });
+map.addControl(drawControl);
 
-        # bands to extract: B02=B, B03=G, B04=R, B08=NIR
-        bands = {"B02":"B", "B03":"G", "B04":"R", "B08":"NIR"}
-        data = {}
+function sendPolygon(polygonGeoJSON){
+  const date = document.getElementById("datePicker").value;
+  fetch("http://localhost:8000/get_bands", {
+    method:"POST",
+    headers:{ "Content-Type":"application/json" },
+    body: JSON.stringify({ polygon: polygonGeoJSON, date: date })
+  })
+  .then(res=>res.json())
+  .then(data=>{
+    document.getElementById("output").textContent = JSON.stringify(data, null, 2);
+  });
+}
 
-        for b_key, b_name in bands.items():
-            asset = item.assets[b_key]
-            url = pc.sign(asset.href)
+// Event: finished drawing
+map.on(L.Draw.Event.CREATED, function(event){
+    var layer = event.layer;
+    drawnItems.addLayer(layer);
+    sendPolygon(layer.toGeoJSON().geometry);
+});
 
-            tmp_file = tempfile.NamedTemporaryFile()
-            r = requests.get(url)
-            tmp_file.write(r.content)
-            tmp_file.flush()
-
-            with rasterio.open(tmp_file.name) as src:
-                out_image, out_transform = rasterio.mask.mask(src, [mapping(geom)], crop=True)
-                data[b_name] = out_image[0].tolist()
-
-        return {"bands": data, "id": item.id}
-
-    except Exception as e:
-        return {"error": str(e)}
+// Event: change date → resend polygon
+document.getElementById("datePicker").addEventListener("change", ()=>{
+  drawnItems.eachLayer(layer=>{
+    sendPolygon(layer.toGeoJSON().geometry);
+  });
+});
+</script>
+</body>
+</html>
