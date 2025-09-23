@@ -2,12 +2,15 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import ee
 
-# Init Earth Engine
-ee.Initialize()
+# Initialize GEE with Service Account
+service_account = "YOUR_SERVICE_ACCOUNT@developer.gserviceaccount.com"
+key_file = "gee_credentials.json"
+credentials = ee.ServiceAccountCredentials(service_account, key_file)
+ee.Initialize(credentials)
 
 app = FastAPI()
 
-# allow frontend (Leaflet) to call API
+# Allow frontend requests
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -17,18 +20,19 @@ app.add_middleware(
 
 @app.get("/gee/sentinel")
 def get_sentinel(date: str):
-    """ดึง Sentinel-2 ตามวันที่"""
-    point = ee.Geometry.Point([100.5231, 13.7367])  # Bangkok center
+    point = ee.Geometry.Point([100.5231, 13.7367])  # Bangkok
 
-    collection = ee.ImageCollection("COPERNICUS/S2") \
-        .filterDate(date, date) \
-        .filterBounds(point) \
-        .median()
+    collection = (
+        ee.ImageCollection("COPERNICUS/S2")
+        .filterDate(date, date)
+        .filterBounds(point)
+    )
 
+    if collection.size().getInfo() == 0:
+        return {"error": "No image for this date"}
+
+    image = collection.median()
     vis = {"bands": ["B4", "B3", "B2"], "min": 0, "max": 3000}
+    map_id_dict = ee.Image(image).getMapId(vis)
 
-    map_id_dict = ee.Image(collection).getMapId(vis)
-    return {
-        "mapid": map_id_dict["mapid"],
-        "token": map_id_dict["token"]
-    }
+    return {"mapid": map_id_dict["mapid"], "token": map_id_dict["token"]}
