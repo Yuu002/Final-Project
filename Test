@@ -1,48 +1,48 @@
-// App.js
-import React, { useState } from 'react';
-import { MapContainer, TileLayer, GeoJSON } from 'react-leaflet';
-import 'leaflet/dist/leaflet.css';
-import provincesData from './provinces.json'; // GeoJSON ของจังหวัด/รัฐ
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Satellite Map with Province Borders</title>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <style>
+        #map { height: 600px; width: 100%; margin-top: 10px; }
+        body { font-family: Arial, sans-serif; padding: 10px; }
+    </style>
+</head>
+<body>
+    <h3>Satellite Map Viewer</h3>
+    <label for="datePicker">Select Date: </label>
+    <input type="date" id="datePicker" value="2025-09-23">
 
-function App() {
-  const [selectedDate, setSelectedDate] = useState('2025-09-23');
+    <div id="map"></div>
 
-  const handleDateChange = (e) => {
-    setSelectedDate(e.target.value);
-    console.log('Selected date:', e.target.value);
-    // ต่อไปสามารถ fetch tile layer / backend ตามวันที่นี้
-  };
+    <script>
+        // สร้าง map
+        var map = L.map('map').setView([13.7367, 100.5231], 6);
 
-  const geoStyle = {
-    color: 'red',
-    weight: 1,
-    fill: false,
-  };
+        // Satellite basemap (ESRI World Imagery)
+        var satelliteLayer = L.tileLayer(
+            'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', 
+            { attribution: 'Tiles &copy; Esri', maxZoom: 19 }
+        ).addTo(map);
 
-  return (
-    <div>
-      <h2>Satellite Map Viewer</h2>
-      <label htmlFor="datePicker">Select Date: </label>
-      <input
-        type="date"
-        id="datePicker"
-        value={selectedDate}
-        onChange={handleDateChange}
-      />
+        // GeoJSON provinces (ตัวอย่างใช้ URL ของ Natural Earth)
+        fetch('https://raw.githubusercontent.com/datasets/geo-boundaries-world-110m/master/countries.geojson')
+        .then(response => response.json())
+        .then(data => {
+            L.geoJSON(data, { 
+                style: { color: 'red', weight: 1, fill: false } 
+            }).addTo(map);
+        });
 
-      <MapContainer center={[13.7367, 100.5231]} zoom={6} style={{ height: '600px', marginTop: '10px' }}>
-        {/* Satellite Basemap */}
-        <TileLayer
-          url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
-          attribution="Tiles &copy; Esri"
-          maxZoom={19}
-        />
-
-        {/* Province / State Borders */}
-        <GeoJSON data={provincesData} style={geoStyle} />
-      </MapContainer>
-    </div>
-  );
-}
-
-export default App;
+        // Date picker event
+        document.getElementById("datePicker").addEventListener("change", function() {
+            var selectedDate = this.value;
+            console.log("Selected date:", selectedDate);
+            // ปัจจุบันยังไม่ได้เปลี่ยนภาพจริง
+            // ต่อไปสามารถ fetch backend / tile layer ตามวันที่นี้
+        });
+    </script>
+</body>
+</html>
