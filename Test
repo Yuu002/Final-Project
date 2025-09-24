@@ -27,3 +27,26 @@ mlp.fit(X_train, y_train)
 joblib.dump(mlp, "mlp_model.pkl")
 joblib.dump(scaler_X, "scaler_X.save")
 joblib.dump(scaler_y, "scaler_y.save")
+
+from sklearn.svm import SVR
+from sklearn.metrics import mean_squared_error, r2_score
+import matplotlib.pyplot as plt
+import numpy as np # Import numpy for sqrt
+
+# X_train, X_test, y_train, y_test = prepare_data("AGB_Data.xlsx")
+
+model = SVR(kernel='rbf', C=100, gamma=0.1, epsilon=0.1)
+model.fit(X_train, y_train)
+y_pred_svr = model.predict(X_test)
+
+# Fix: Calculate RMSE by taking the square root of MSE instead of using squared=False
+mse = mean_squared_error(y_test, y_pred_svr)
+rmse = np.sqrt(mse)
+r2 = r2_score(y_test, y_pred_svr)
+
+print(f"SVM (RBF Kernel) -> R²: {r2:.4f}, RMSE: {rmse:.4f}")
+
+import joblib
+joblib.dump(model, "svr_agb_model.pkl")
+loaded_model = joblib.load("svr_agb_model.pkl")
+y_pred_loaded = loaded_model.predict(X_test)
