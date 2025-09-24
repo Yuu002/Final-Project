@@ -1,35 +1,35 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>AGB Web App</title>
-  <link href="style.css" rel="stylesheet" />
-  <!-- MapLibre -->
-  <link
-    href="https://unpkg.com/maplibre-gl@2.4.0/dist/maplibre-gl.css"
-    rel="stylesheet"
-  />
-  <script src="https://unpkg.com/maplibre-gl@2.4.0/dist/maplibre-gl.js"></script>
-  <!-- Mapbox Draw (ใช้กับ MapLibre ได้) -->
-  <link
-    href="https://api.mapbox.com/mapbox-gl-js/plugins/mapbox-gl-draw/v1.4.2/mapbox-gl-draw.css"
-    rel="stylesheet"
-  />
-  <script src="https://api.mapbox.com/mapbox-gl-js/plugins/mapbox-gl-draw/v1.4.2/mapbox-gl-draw.js"></script>
-</head>
-<body>
-  <div id="map"></div>
+body {
+  margin: 0;
+  font-family: Arial, sans-serif;
+}
 
-  <!-- Side Panel -->
-  <div id="side-panel">
-    <h2>ผลลัพธ์ AGB</h2>
-    <label for="date">เลือกวันที่:</label>
-    <input type="date" id="date" />
-    <button id="analyze-btn">วิเคราะห์</button>
-    <div id="results"></div>
-  </div>
+#map {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 75%;
+}
 
-  <script src="app.js"></script>
-</body>
-</html>
+#side-panel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 25%;
+  height: 100%;
+  background: #f8f8f8;
+  border-left: 1px solid #ddd;
+  padding: 15px;
+  overflow-y: auto;
+}
+
+#results {
+  margin-top: 15px;
+}
+
+.card {
+  background: #fff;
+  border: 1px solid #ccc;
+  padding: 10px;
+  margin-bottom: 10px;
+  border-radius: 5px;
+}
