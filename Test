@@ -1,84 +1,108 @@
-// ====== ตั้งค่า Backend URL ======
-const BACKEND_URL = "http://127.0.0.1:8000"; // เปลี่ยนเป็น Render URL หลัง deploy
+# app.py
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from typing import Dict, Optional
+import joblib
+import numpy as np
+import rasterio
+import rasterio.mask as rio_mask
+from rasterio.warp import transform_geom
+from indices import calculate_indices
 
-// ====== สร้าง Map ======
-const map = new maplibregl.Map({
-  container: "map",
-  style: "https://demotiles.maplibre.org/style.json", // basemap ฟรี
-  center: [100.5, 13.7], // Bangkok
-  zoom: 6,
-});
+app = FastAPI(title="AGB Crop API")
 
-// ====== เพิ่ม Draw Tool ======
-const Draw = new MapboxDraw({
-  displayControlsDefault: false,
-  controls: {
-    polygon: true,
-    trash: true,
-  },
-});
-map.addControl(Draw, "top-left");
+# ---- Pydantic model for incoming request ----
+class CropStatsRequest(BaseModel):
+    polygon: dict                # GeoJSON geometry (EPSG:4326)
+    date: Optional[str] = None   # optional for logging
+    band_urls: Dict[str, str]    # expect keys: "B02","B03","B04","B08"
+    use_mlp: Optional[bool] = False
 
-// ====== ปุ่มวิเคราะห์ ======
-document.getElementById("analyze-btn").addEventListener("click", async () => {
-  const selectedDate = document.getElementById("date").value;
-  const data = Draw.getAll();
+# ---- load models at startup ----
+@app.on_event("startup")
+def load_models():
+    global svr_model, scaler_svr_X, mlp_model, scaler_mlp_X, scaler_mlp_y
+    # adjust paths if you put models elsewhere
+    svr_model = joblib.load("models/svr_agb_model.pkl")
+    scaler_svr_X = joblib.load("models/scaler_svr_X.pkl")
+    try:
+        mlp_model = joblib.load("models/mlp_model.pkl")
+        scaler_mlp_X = joblib.load("models/scaler_mlp_X.pkl")
+        scaler_mlp_y = joblib.load("models/scaler_mlp_y.pkl")
+    except Exception:
+        mlp_model = None
+        scaler_mlp_X = None
+        scaler_mlp_y = None
 
-  if (!data.features.length) {
-    alert("กรุณาวาดพื้นที่ (polygon) บนแผนที่");
-    return;
-  }
+# ---- helper: read mean from a single-band COG URL clipped by polygon ----
+def mean_from_cog(url: str, geom_geojson: dict) -> float:
+    """
+    url: HTTPS URL to a single-band COG (e.g. B04.tif)
+    geom_geojson: a GeoJSON geometry in EPSG:4326
+    returns: mean reflectance (0..1) as float
+    """
+    try:
+        with rasterio.Env():
+            with rasterio.open(url) as src:
+                target_crs = src.crs.to_string()
+                geom_proj = transform_geom("EPSG:4326", target_crs, geom_geojson)
+                out_image, out_transform = rio_mask.mask(src, [geom_proj], crop=True)
+                arr = out_image[0].astype(np.float32)
+                # mask nodata if available
+                if src.nodata is not None:
+                    mask = (arr == src.nodata)
+                else:
+                    mask = np.isnan(arr)
+                # if values are integer-reflectance (like Sentinel-2 L2A) divide by 10000
+                if np.nanmax(arr) > 2:
+                    arr = arr / 10000.0
+                valid = arr[~mask]
+                if valid.size == 0:
+                    raise ValueError("No valid pixels (all masked/nodata).")
+                return float(np.nanmean(valid))
+    except Exception as e:
+        raise
 
-  if (!selectedDate) {
-    alert("กรุณาเลือกวันที่");
-    return;
-  }
+# ---- POST /crop-stats ----
+@app.post("/crop-stats")
+def crop_stats(req: CropStatsRequest):
+    required_bands = ["B02", "B03", "B04", "B08"]
+    if not all(b in req.band_urls for b in required_bands):
+        raise HTTPException(status_code=400, detail=f"band_urls must include {required_bands}")
 
-  // ใช้ polygon แรกที่วาด
-  const polygon = data.features[0].geometry;
+    try:
+        blue = mean_from_cog(req.band_urls["B02"], req.polygon)
+        green = mean_from_cog(req.band_urls["B03"], req.polygon)
+        red = mean_from_cog(req.band_urls["B04"], req.polygon)
+        nir = mean_from_cog(req.band_urls["B08"], req.polygon)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Reading COG failed: {e}")
 
-  // ส่งไป Backend
-  try {
-    const response = await fetch(`${BACKEND_URL}/crop-stats`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        polygon: polygon,
-        date: selectedDate,
-      }),
-    });
+    # calculate indices
+    indices = calculate_indices(red=red, nir=nir, blue=blue, green=green)
 
-    if (!response.ok) {
-      throw new Error("API error");
+    # prepare input for SVR (order: NDVI, TNDVI, SR, SAVI, MSAVI2)
+    X = np.array([[indices["NDVI"], indices["TNDVI"], indices["SR"], indices["SAVI"], indices["MSAVI2"]]])
+    X_scaled = scaler_svr_X.transform(X)
+    agb = float(svr_model.predict(X_scaled)[0])
+
+    resp = {
+        "bands_mean": {"B02": blue, "B03": green, "B04": red, "B08": nir},
+        "indices": indices,
+        "AGB": agb
     }
 
-    const result = await response.json();
-    showResult(result);
-  } catch (error) {
-    console.error(error);
-    alert("ไม่สามารถเชื่อมต่อ API ได้");
-  }
-});
+    # optional: run mlp to predict bands (if you want)
+    if req.use_mlp and mlp_model is not None:
+        X_mlp = np.array([[blue, green, red, nir]])
+        X_mlp_s = scaler_mlp_X.transform(X_mlp)
+        y_pred_s = mlp_model.predict(X_mlp_s)
+        y_pred = scaler_mlp_y.inverse_transform(y_pred_s)
+        resp["mlp_predicted_bands"] = {
+            "Blue": float(y_pred[0, 0]),
+            "Green": float(y_pred[0, 1]),
+            "Red": float(y_pred[0, 2]),
+            "NIR": float(y_pred[0, 3]),
+        }
 
-// ====== แสดงผลลัพธ์ใน Panel ======
-function showResult(result) {
-  const resultsDiv = document.getElementById("results");
-
-  const card = document.createElement("div");
-  card.className = "card";
-
-  card.innerHTML = `
-    <p><b>วันที่:</b> ${result.date || "-"}</p>
-    <p><b>พิกัด:</b> ${JSON.stringify(result.centroid || "-")}</p>
-    <p><b>NDVI:</b> ${result.indices?.NDVI?.toFixed(3) ?? "-"}</p>
-    <p><b>TNDVI:</b> ${result.indices?.TNDVI?.toFixed(3) ?? "-"}</p>
-    <p><b>SR:</b> ${result.indices?.SR?.toFixed(3) ?? "-"}</p>
-    <p><b>SAVI:</b> ${result.indices?.SAVI?.toFixed(3) ?? "-"}</p>
-    <p><b>MSAVI2:</b> ${result.indices?.MSAVI2?.toFixed(3) ?? "-"}</p>
-    <p><b>AGB (t/ha):</b> ${result.agb?.toFixed(2) ?? "-"}</p>
-  `;
-
-  resultsDiv.prepend(card);
-}
+    return resp
