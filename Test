@@ -1,108 +1,12 @@
-# app.py
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-from typing import Dict, Optional
-import joblib
-import numpy as np
-import rasterio
-import rasterio.mask as rio_mask
-from rasterio.warp import transform_geom
-from indices import calculate_indices
-
-app = FastAPI(title="AGB Crop API")
-
-# ---- Pydantic model for incoming request ----
-class CropStatsRequest(BaseModel):
-    polygon: dict                # GeoJSON geometry (EPSG:4326)
-    date: Optional[str] = None   # optional for logging
-    band_urls: Dict[str, str]    # expect keys: "B02","B03","B04","B08"
-    use_mlp: Optional[bool] = False
-
-# ---- load models at startup ----
-@app.on_event("startup")
-def load_models():
-    global svr_model, scaler_svr_X, mlp_model, scaler_mlp_X, scaler_mlp_y
-    # adjust paths if you put models elsewhere
-    svr_model = joblib.load("models/svr_agb_model.pkl")
-    scaler_svr_X = joblib.load("models/scaler_svr_X.pkl")
-    try:
-        mlp_model = joblib.load("models/mlp_model.pkl")
-        scaler_mlp_X = joblib.load("models/scaler_mlp_X.pkl")
-        scaler_mlp_y = joblib.load("models/scaler_mlp_y.pkl")
-    except Exception:
-        mlp_model = None
-        scaler_mlp_X = None
-        scaler_mlp_y = None
-
-# ---- helper: read mean from a single-band COG URL clipped by polygon ----
-def mean_from_cog(url: str, geom_geojson: dict) -> float:
-    """
-    url: HTTPS URL to a single-band COG (e.g. B04.tif)
-    geom_geojson: a GeoJSON geometry in EPSG:4326
-    returns: mean reflectance (0..1) as float
-    """
-    try:
-        with rasterio.Env():
-            with rasterio.open(url) as src:
-                target_crs = src.crs.to_string()
-                geom_proj = transform_geom("EPSG:4326", target_crs, geom_geojson)
-                out_image, out_transform = rio_mask.mask(src, [geom_proj], crop=True)
-                arr = out_image[0].astype(np.float32)
-                # mask nodata if available
-                if src.nodata is not None:
-                    mask = (arr == src.nodata)
-                else:
-                    mask = np.isnan(arr)
-                # if values are integer-reflectance (like Sentinel-2 L2A) divide by 10000
-                if np.nanmax(arr) > 2:
-                    arr = arr / 10000.0
-                valid = arr[~mask]
-                if valid.size == 0:
-                    raise ValueError("No valid pixels (all masked/nodata).")
-                return float(np.nanmean(valid))
-    except Exception as e:
-        raise
-
-# ---- POST /crop-stats ----
-@app.post("/crop-stats")
-def crop_stats(req: CropStatsRequest):
-    required_bands = ["B02", "B03", "B04", "B08"]
-    if not all(b in req.band_urls for b in required_bands):
-        raise HTTPException(status_code=400, detail=f"band_urls must include {required_bands}")
-
-    try:
-        blue = mean_from_cog(req.band_urls["B02"], req.polygon)
-        green = mean_from_cog(req.band_urls["B03"], req.polygon)
-        red = mean_from_cog(req.band_urls["B04"], req.polygon)
-        nir = mean_from_cog(req.band_urls["B08"], req.polygon)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Reading COG failed: {e}")
-
-    # calculate indices
-    indices = calculate_indices(red=red, nir=nir, blue=blue, green=green)
-
-    # prepare input for SVR (order: NDVI, TNDVI, SR, SAVI, MSAVI2)
-    X = np.array([[indices["NDVI"], indices["TNDVI"], indices["SR"], indices["SAVI"], indices["MSAVI2"]]])
-    X_scaled = scaler_svr_X.transform(X)
-    agb = float(svr_model.predict(X_scaled)[0])
-
-    resp = {
-        "bands_mean": {"B02": blue, "B03": green, "B04": red, "B08": nir},
-        "indices": indices,
-        "AGB": agb
-    }
-
-    # optional: run mlp to predict bands (if you want)
-    if req.use_mlp and mlp_model is not None:
-        X_mlp = np.array([[blue, green, red, nir]])
-        X_mlp_s = scaler_mlp_X.transform(X_mlp)
-        y_pred_s = mlp_model.predict(X_mlp_s)
-        y_pred = scaler_mlp_y.inverse_transform(y_pred_s)
-        resp["mlp_predicted_bands"] = {
-            "Blue": float(y_pred[0, 0]),
-            "Green": float(y_pred[0, 1]),
-            "Red": float(y_pred[0, 2]),
-            "NIR": float(y_pred[0, 3]),
-        }
-
-    return resp
+fastapi
+uvicorn[standard]
+numpy
+pandas
+scikit-learn
+joblib
+rasterio
+rio-tiler
+shapely
+pyproj
+matplotlib
+geojson
