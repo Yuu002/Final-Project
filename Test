@@ -1,40 +1,46 @@
-# ===== svr_agb_train.py =====
-import pandas as pd
-from sklearn.preprocessing import StandardScaler
-from sklearn.svm import SVR
-from sklearn.metrics import mean_squared_error, r2_score
-from sklearn.model_selection import train_test_split
 import numpy as np
-import joblib
 
-# Load dataset
-data = pd.read_excel("AGB_Data.xlsx")
+def calculate_indices(red, nir, blue=None, green=None, L=0.5):
+    """
+    คำนวณดัชนีพืชพรรณ 5 ตัว (NDVI, TNDVI, SR, SAVI, MSAVI2)
+    Parameters
+    ----------
+    red : np.ndarray
+        ค่า band แดง
+    nir : np.ndarray
+        ค่า band NIR
+    blue : np.ndarray, optional
+        ค่า band น้ำเงิน (สำรองไว้ เผื่อใช้ในสูตรอื่น)
+    green : np.ndarray, optional
+        ค่า band เขียว (สำรองไว้ เผื่อใช้ในสูตรอื่น)
+    L : float, default=0.5
+        ค่า soil adjustment factor สำหรับ SAVI
+    
+    Returns
+    -------
+    dict : { "NDVI": val, "TNDVI": val, "SR": val, "SAVI": val, "MSAVI2": val }
+        ผลลัพธ์ดัชนีเป็น dictionary (เฉลี่ยแล้ว)
+    """
 
-# Example: Features are 5 vegetation indices
-X = data[["NDVI", "EVI", "SAVI", "MSAVI2", "TNDVI"]].values
-y = data["AGB"].values  # ต้องเป็น 1D array
+    # --- NDVI ---
+    ndvi = (nir - red) / (nir + red + 1e-10)
 
-# Scale features
-scaler_X = StandardScaler()
-X_scaled = scaler_X.fit_transform(X)
+    # --- TNDVI ---
+    tndvi = np.sqrt(ndvi + 0.5)
 
-# Train/test split
-X_train, X_test, y_train, y_test = train_test_split(
-    X_scaled, y, test_size=0.2, random_state=42
-)
+    # --- SR (Simple Ratio) ---
+    sr = nir / (red + 1e-10)
 
-# Train SVR
-model = SVR(kernel="rbf", C=100, gamma=0.1, epsilon=0.1)
-model.fit(X_train, y_train)
+    # --- SAVI ---
+    savi = ((nir - red) / (nir + red + L + 1e-10)) * (1.0 + L)
 
-# Evaluate
-y_pred = model.predict(X_test)
-mse = mean_squared_error(y_test, y_pred)
-rmse = np.sqrt(mse)
-r2 = r2_score(y_test, y_pred)
-print(f"SVM (RBF) -> R²: {r2:.4f}, RMSE: {rmse:.4f}")
+    # --- MSAVI2 ---
+    msavi2 = (2 * nir + 1 - np.sqrt((2 * nir + 1) ** 2 - 8 * (nir - red))) / 2
 
-# Save model + scaler
-joblib.dump(model, "svr_agb_model.pkl")
-joblib.dump(scaler_X, "scaler_X.pkl")
-print("✅ Saved svr_agb_model.pkl, scaler_X.pkl")
+    return {
+        "NDVI": float(np.nanmean(ndvi)),
+        "TNDVI": float(np.nanmean(tndvi)),
+        "SR": float(np.nanmean(sr)),
+        "SAVI": float(np.nanmean(savi)),
+        "MSAVI2": float(np.nanmean(msavi2)),
+    }
