@@ -1,41 +1,21 @@
+# indices.py
 import numpy as np
 
 def calculate_indices(red, nir, blue=None, green=None, L=0.5):
     """
-    คำนวณดัชนีพืชพรรณ 5 ตัว (NDVI, TNDVI, SR, SAVI, MSAVI2)
-    Parameters
-    ----------
-    red : np.ndarray
-        ค่า band แดง
-    nir : np.ndarray
-        ค่า band NIR
-    blue : np.ndarray, optional
-        ค่า band น้ำเงิน (สำรองไว้ เผื่อใช้ในสูตรอื่น)
-    green : np.ndarray, optional
-        ค่า band เขียว (สำรองไว้ เผื่อใช้ในสูตรอื่น)
-    L : float, default=0.5
-        ค่า soil adjustment factor สำหรับ SAVI
-    
-    Returns
-    -------
-    dict : { "NDVI": val, "TNDVI": val, "SR": val, "SAVI": val, "MSAVI2": val }
-        ผลลัพธ์ดัชนีเป็น dictionary (เฉลี่ยแล้ว)
+    คำนวณ NDVI, TNDVI, SR, SAVI, MSAVI2
+    red, nir, blue, green สามารถเป็น scalar หรือ numpy array
+    คืนค่าเป็น dict ของค่าเฉลี่ย (float)
     """
+    red = np.array(red, dtype=float)
+    nir = np.array(nir, dtype=float)
 
-    # --- NDVI ---
     ndvi = (nir - red) / (nir + red + 1e-10)
-
-    # --- TNDVI ---
-    tndvi = np.sqrt(ndvi + 0.5)
-
-    # --- SR (Simple Ratio) ---
+    # TNDVI: สูตรที่ใช้ในโปรเจค (ระวัง domain ของ sqrt)
+    tndvi = np.sqrt(np.clip(ndvi + 0.5, a_min=0.0, a_max=None))
     sr = nir / (red + 1e-10)
-
-    # --- SAVI ---
     savi = ((nir - red) / (nir + red + L + 1e-10)) * (1.0 + L)
-
-    # --- MSAVI2 ---
-    msavi2 = (2 * nir + 1 - np.sqrt((2 * nir + 1) ** 2 - 8 * (nir - red))) / 2
+    msavi2 = (2 * nir + 1 - np.sqrt((2 * nir + 1) ** 2 - 8 * (nir - red + 1e-10))) / 2
 
     return {
         "NDVI": float(np.nanmean(ndvi)),
