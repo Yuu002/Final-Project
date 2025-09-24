@@ -1,8 +1,35 @@
-fastapi
-uvicorn[standard]
-rasterio
-numpy
-scikit-learn
-pandas
-joblib
-shapely
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AGB Web App</title>
+  <link href="style.css" rel="stylesheet" />
+  <!-- MapLibre -->
+  <link
+    href="https://unpkg.com/maplibre-gl@2.4.0/dist/maplibre-gl.css"
+    rel="stylesheet"
+  />
+  <script src="https://unpkg.com/maplibre-gl@2.4.0/dist/maplibre-gl.js"></script>
+  <!-- Mapbox Draw (ใช้กับ MapLibre ได้) -->
+  <link
+    href="https://api.mapbox.com/mapbox-gl-js/plugins/mapbox-gl-draw/v1.4.2/mapbox-gl-draw.css"
+    rel="stylesheet"
+  />
+  <script src="https://api.mapbox.com/mapbox-gl-js/plugins/mapbox-gl-draw/v1.4.2/mapbox-gl-draw.js"></script>
+</head>
+<body>
+  <div id="map"></div>
+
+  <!-- Side Panel -->
+  <div id="side-panel">
+    <h2>ผลลัพธ์ AGB</h2>
+    <label for="date">เลือกวันที่:</label>
+    <input type="date" id="date" />
+    <button id="analyze-btn">วิเคราะห์</button>
+    <div id="results"></div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
