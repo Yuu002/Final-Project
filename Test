@@ -1,35 +1,84 @@
-body {
-  margin: 0;
-  font-family: Arial, sans-serif;
-}
+// ====== ตั้งค่า Backend URL ======
+const BACKEND_URL = "http://127.0.0.1:8000"; // เปลี่ยนเป็น Render URL หลัง deploy
 
-#map {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 75%;
-}
+// ====== สร้าง Map ======
+const map = new maplibregl.Map({
+  container: "map",
+  style: "https://demotiles.maplibre.org/style.json", // basemap ฟรี
+  center: [100.5, 13.7], // Bangkok
+  zoom: 6,
+});
 
-#side-panel {
-  position: absolute;
-  top: 0;
-  right: 0;
-  width: 25%;
-  height: 100%;
-  background: #f8f8f8;
-  border-left: 1px solid #ddd;
-  padding: 15px;
-  overflow-y: auto;
-}
+// ====== เพิ่ม Draw Tool ======
+const Draw = new MapboxDraw({
+  displayControlsDefault: false,
+  controls: {
+    polygon: true,
+    trash: true,
+  },
+});
+map.addControl(Draw, "top-left");
 
-#results {
-  margin-top: 15px;
-}
+// ====== ปุ่มวิเคราะห์ ======
+document.getElementById("analyze-btn").addEventListener("click", async () => {
+  const selectedDate = document.getElementById("date").value;
+  const data = Draw.getAll();
 
-.card {
-  background: #fff;
-  border: 1px solid #ccc;
-  padding: 10px;
-  margin-bottom: 10px;
-  border-radius: 5px;
+  if (!data.features.length) {
+    alert("กรุณาวาดพื้นที่ (polygon) บนแผนที่");
+    return;
+  }
+
+  if (!selectedDate) {
+    alert("กรุณาเลือกวันที่");
+    return;
+  }
+
+  // ใช้ polygon แรกที่วาด
+  const polygon = data.features[0].geometry;
+
+  // ส่งไป Backend
+  try {
+    const response = await fetch(`${BACKEND_URL}/crop-stats`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        polygon: polygon,
+        date: selectedDate,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error("API error");
+    }
+
+    const result = await response.json();
+    showResult(result);
+  } catch (error) {
+    console.error(error);
+    alert("ไม่สามารถเชื่อมต่อ API ได้");
+  }
+});
+
+// ====== แสดงผลลัพธ์ใน Panel ======
+function showResult(result) {
+  const resultsDiv = document.getElementById("results");
+
+  const card = document.createElement("div");
+  card.className = "card";
+
+  card.innerHTML = `
+    <p><b>วันที่:</b> ${result.date || "-"}</p>
+    <p><b>พิกัด:</b> ${JSON.stringify(result.centroid || "-")}</p>
+    <p><b>NDVI:</b> ${result.indices?.NDVI?.toFixed(3) ?? "-"}</p>
+    <p><b>TNDVI:</b> ${result.indices?.TNDVI?.toFixed(3) ?? "-"}</p>
+    <p><b>SR:</b> ${result.indices?.SR?.toFixed(3) ?? "-"}</p>
+    <p><b>SAVI:</b> ${result.indices?.SAVI?.toFixed(3) ?? "-"}</p>
+    <p><b>MSAVI2:</b> ${result.indices?.MSAVI2?.toFixed(3) ?? "-"}</p>
+    <p><b>AGB (t/ha):</b> ${result.agb?.toFixed(2) ?? "-"}</p>
+  `;
+
+  resultsDiv.prepend(card);
 }
