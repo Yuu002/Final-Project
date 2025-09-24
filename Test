@@ -1,10 +1,29 @@
-fastapi
-uvicorn[standard]
-rasterio
-numpy
-shapely
-pyproj
-requests
-scikit-learn
-pillow
-mapbox-gl-draw==1.3.0  # used on frontend - installed for completeness (not used by backend)
+import pandas as pd
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import train_test_split
+from sklearn.neural_network import MLPRegressor
+import joblib
+
+# Load dataset
+data = pd.read_csv("bands_extracted.csv")
+X = data[["Band1", "Band2", "Band3", "Band4"]].values
+y = data[["Blue (B1)", "Green (B2)", "Red (B3)", "NIR (B4)"]].values
+
+# Scale features and outputs
+scaler_X = StandardScaler()
+X_scaled = scaler_X.fit_transform(X)
+
+scaler_y = StandardScaler()
+y_scaled = scaler_y.fit_transform(y)
+
+# Train/test split
+X_train, X_test, y_train, y_test = train_test_split(X_scaled, y_scaled, test_size=0.2, random_state=42)
+
+# Train MLP
+mlp = MLPRegressor(hidden_layer_sizes=(64,64,32), max_iter=500, random_state=42)
+mlp.fit(X_train, y_train)
+
+# Save model and scalers
+joblib.dump(mlp, "mlp_model.pkl")
+joblib.dump(scaler_X, "scaler_X.save")
+joblib.dump(scaler_y, "scaler_y.save")
