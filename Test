@@ -1,38 +1,40 @@
-# ===== mlp_train.py =====
+# ===== svr_agb_train.py =====
 import pandas as pd
 from sklearn.preprocessing import StandardScaler
+from sklearn.svm import SVR
+from sklearn.metrics import mean_squared_error, r2_score
 from sklearn.model_selection import train_test_split
-from sklearn.neural_network import MLPRegressor
+import numpy as np
 import joblib
 
 # Load dataset
-data = pd.read_csv("bands_extracted.csv")
+data = pd.read_excel("AGB_Data.xlsx")
 
-# Features (input bands)
-X = data[["Band1", "Band2", "Band3", "Band4"]].values
+# Example: Features are 5 vegetation indices
+X = data[["NDVI", "EVI", "SAVI", "MSAVI2", "TNDVI"]].values
+y = data["AGB"].values  # ต้องเป็น 1D array
 
-# Target (example: output bands or indices)
-y = data[["Blue (B1)", "Green (B2)", "Red (B3)", "NIR (B4)"]].values
-
-# Scale features and outputs
+# Scale features
 scaler_X = StandardScaler()
 X_scaled = scaler_X.fit_transform(X)
 
-scaler_y = StandardScaler()
-y_scaled = scaler_y.fit_transform(y)
-
 # Train/test split
 X_train, X_test, y_train, y_test = train_test_split(
-    X_scaled, y_scaled, test_size=0.2, random_state=42
+    X_scaled, y, test_size=0.2, random_state=42
 )
 
-# Train MLP
-mlp = MLPRegressor(hidden_layer_sizes=(64, 64, 32), 
-                   max_iter=500, random_state=42)
-mlp.fit(X_train, y_train)
+# Train SVR
+model = SVR(kernel="rbf", C=100, gamma=0.1, epsilon=0.1)
+model.fit(X_train, y_train)
 
-# Save model and scalers
-joblib.dump(mlp, "mlp_model.pkl")
+# Evaluate
+y_pred = model.predict(X_test)
+mse = mean_squared_error(y_test, y_pred)
+rmse = np.sqrt(mse)
+r2 = r2_score(y_test, y_pred)
+print(f"SVM (RBF) -> R²: {r2:.4f}, RMSE: {rmse:.4f}")
+
+# Save model + scaler
+joblib.dump(model, "svr_agb_model.pkl")
 joblib.dump(scaler_X, "scaler_X.pkl")
-joblib.dump(scaler_y, "scaler_y.pkl")
-print("✅ Saved mlp_model.pkl, scaler_X.pkl, scaler_y.pkl")
+print("✅ Saved svr_agb_model.pkl, scaler_X.pkl")
