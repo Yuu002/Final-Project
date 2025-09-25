@@ -1,56 +1,156 @@
-{
-  "name": "satellite-agb-frontend",
-  "version": "1.0.0",
-  "private": true,
-  "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
-    "lint": "next lint"
-  },
-  "dependencies": {
-    "next": "13.5.4",
-    "react": "18.2.0",
-    "react-dom": "18.2.0",
-    "react-leaflet": "^4.2.1",
-    "leaflet": "^1.9.4"
-  },
-  "devDependencies": {
-    "typescript": "^5.2.2",
-    "@types/react": "^18.2.15",
-    "@types/react-dom": "^18.2.7",
-    "@types/leaflet": "^1.9.7"
-  }
+// frontend/src/pages/_app.tsx
+import "../styles/globals.css";
+import "leaflet/dist/leaflet.css"; // ใส่ตรงนี้เพื่อให้ Leaflet map แสดงถูกต้อง
+import type { AppProps } from "next/app";
+
+function MyApp({ Component, pageProps }: AppProps) {
+  return <Component {...pageProps} />;
+}
+
+export default MyApp;
+--
+
+// frontend/src/lib/api.ts
+export interface ProcessResponse {
+  lat: number;
+  lon: number;
+  dn_red: number;
+  dn_nir: number;
+  indices: {
+    NDVI: number;
+    TNDVI: number;
+    SR: number;
+    SAVI: number;
+    MSAVI2: number;
+  };
+  AGB: number;
+}
+
+export async function fetchProcess(lat: number, lon: number): Promise<ProcessResponse> {
+  const res = await fetch(`/api/process`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ lat, lon }),
+  });
+
+  if (!res.ok) throw new Error(`API Error: ${res.status}`);
+
+  const data: ProcessResponse = await res.json();
+  return data;
 }
 --
 
-{
-  "compilerOptions": {
-    "target": "ES6",
-    "lib": ["dom", "es6"],
-    "allowJs": true,
-    "skipLibCheck": true,
-    "strict": true,
-    "forceConsistentCasingInFileNames": true,
-    "module": "ESNext",
-    "moduleResolution": "node",
-    "resolveJsonModule": true,
-    "isolatedModules": true,
-    "noEmit": true,
-    "jsx": "react-jsx",
-    "baseUrl": "./src",
-    "paths": {
-      "*": ["*"]
-    }
-  },
-  "include": ["src"]
+// frontend/src/components/Sidebar.tsx
+import React from "react";
+import { ProcessResponse } from "../lib/api";
+
+interface SidebarProps {
+  data?: ProcessResponse;
 }
+
+const Sidebar: React.FC<SidebarProps> = ({ data }) => {
+  return (
+    <div style={{ width: 300, padding: 10, backgroundColor: "#f5f5f5" }}>
+      <h3>Info</h3>
+      {!data ? (
+        <p>Click on the map to get data.</p>
+      ) : (
+        <>
+          <p>
+            <strong>Lat:</strong> {data.lat.toFixed(5)} <br />
+            <strong>Lon:</strong> {data.lon.toFixed(5)}
+          </p>
+          <h4>Raw DN</h4>
+          <p>
+            Red: {data.dn_red} <br />
+            NIR: {data.dn_nir}
+          </p>
+          <h4>Indices</h4>
+          <p>
+            NDVI: {data.indices.NDVI.toFixed(2)} <br />
+            TNDVI: {data.indices.TNDVI.toFixed(2)} <br />
+            SR: {data.indices.SR.toFixed(2)} <br />
+            SAVI: {data.indices.SAVI.toFixed(2)} <br />
+            MSAVI2: {data.indices.MSAVI2.toFixed(2)}
+          </p>
+          <h4>AGB</h4>
+          <p>{data.AGB.toFixed(2)}</p>
+        </>
+      )}
+    </div>
+  );
+};
+
+export default Sidebar;
 --
 
-/** @type {import('next').NextConfig} */
-const nextConfig = {
-  reactStrictMode: true,
-  swcMinify: true
+// frontend/src/components/Map.tsx
+import React, { useState } from "react";
+import { MapContainer, TileLayer, useMapEvents, Marker, Popup } from "react-leaflet";
+import { LatLng } from "leaflet";
+import { fetchProcess, ProcessResponse } from "../lib/api";
+
+interface MapProps {
+  setData: (data: ProcessResponse) => void;
 }
 
-module.exports = nextConfig;
+const ClickHandler: React.FC<{ setData: (data: ProcessResponse) => void }> = ({ setData }) => {
+  useMapEvents({
+    click: async (e) => {
+      const { lat, lng } = e.latlng;
+      try {
+        const data = await fetchProcess(lat, lng);
+        setData(data);
+      } catch (err) {
+        console.error(err);
+        alert("Error fetching data from backend");
+      }
+    },
+  });
+  return null;
+};
+
+const Map: React.FC<MapProps> = ({ setData }) => {
+  const [marker, setMarker] = useState<LatLng | null>(null);
+
+  return (
+    <MapContainer center={[18.5, 99]} zoom={8} style={{ height: "100vh", width: "100%" }}>
+      <TileLayer
+        url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+        attribution="&copy; Esri & contributors"
+      />
+      <ClickHandler setData={(data) => {
+        setMarker(new LatLng(data.lat, data.lon));
+        setData(data);
+      }} />
+      {marker && (
+        <Marker position={marker}>
+          <Popup>Selected Point</Popup>
+        </Marker>
+      )}
+    </MapContainer>
+  );
+};
+
+export default Map;
+--
+// frontend/src/pages/index.tsx
+import React, { useState } from "react";
+import Map from "../components/Map";
+import Sidebar from "../components/Sidebar";
+import { ProcessResponse } from "../lib/api";
+
+const HomePage: React.FC = () => {
+  const [data, setData] = useState<ProcessResponse | undefined>();
+
+  return (
+    <div style={{ display: "flex" }}>
+      <div style={{ flex: 1 }}>
+        <Map setData={setData} />
+      </div>
+      <Sidebar data={data} />
+    </div>
+  );
+};
+
+export default HomePage;
