@@ -1,60 +1,35 @@
-/* frontend/src/styles/globals.css */
+Server Error
+ReferenceError: window is not defined
 
-/* Reset default margin/padding */
-* {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
-}
-
-/* Body style */
-body {
-  font-family: Arial, Helvetica, sans-serif;
-  background-color: #f9f9f9;
-  color: #333;
-}
-
-/* Full page map container */
-#map {
-  width: 100%;
-  height: 100vh;
-}
-
-/* Sidebar style */
-.sidebar {
-  width: 300px;
-  background-color: #fff;
-  border-left: 1px solid #ddd;
-  padding: 16px;
-  position: absolute;
-  top: 0;
-  right: 0;
-  height: 100%;
-  overflow-y: auto;
-  box-shadow: -2px 0 5px rgba(0,0,0,0.1);
-}
-
-/* Simple button style */
-button {
-  cursor: pointer;
-  background-color: #1976d2;
-  color: #fff;
-  border: none;
-  padding: 8px 12px;
-  border-radius: 4px;
-}
-
-button:hover {
-  background-color: #1565c0;
-}
---
-// frontend/src/pages/_app.tsx
-import "leaflet/dist/leaflet.css";
-import "../styles/globals.css";  // path ต้องตรงกับไฟล์จริง
-import type { AppProps } from "next/app";
-
-function MyApp({ Component, pageProps }: AppProps) {
-  return <Component {...pageProps} />;
-}
-
-export default MyApp;
+This error happened while generating the page. Any console logs will be displayed in the terminal window.
+Call Stack
+<unknown>
+file:///C:/Users/Acer/Desktop/project/frontend/node_modules/leaflet/dist/leaflet-src.js (230:19)
+<unknown>
+file:///C:/Users/Acer/Desktop/project/frontend/node_modules/leaflet/dist/leaflet-src.js (7:66)
+Object.<anonymous>
+file:///C:/Users/Acer/Desktop/project/frontend/node_modules/leaflet/dist/leaflet-src.js (10:3)
+Module._compile
+node:internal/modules/cjs/loader (1469:14)
+Module._extensions..js
+node:internal/modules/cjs/loader (1548:10)
+Module.load
+node:internal/modules/cjs/loader (1288:32)
+Module._load
+node:internal/modules/cjs/loader (1104:12)
+Module.require
+node:internal/modules/cjs/loader (1311:19)
+mod.require
+file:///C:/Users/Acer/Desktop/project/frontend/node_modules/next/dist/server/require-hook.js (64:28)
+require
+node:internal/modules/helpers (179:18)
+Object.leaflet
+file:///C:/Users/Acer/Desktop/project/frontend/.next/server/pages/index.js (98:18)
+__webpack_require__
+file:///C:/Users/Acer/Desktop/project/frontend/.next/server/webpack-runtime.js (33:42)
+eval
+webpack-internal:/src/components/Map.tsx (11:65)
+__webpack_require__.a
+file:///C:/Users/Acer/Desktop/project/frontend/.next/server/webpack-runtime.js (97:13)
+eval
+webpack-internal:/src/components/Map.tsx (1:21)
