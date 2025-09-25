@@ -1,62 +1,34 @@
-from fastapi import FastAPI
-from app.routes import process
-
-app = FastAPI(title="AGB Prediction API")
-
-app.include_router(process.router, prefix="/api")
-----
-
-from fastapi import APIRouter
-from pydantic import BaseModel
-from app.services.ml_pipeline import run_pipeline
-
-router = APIRouter()
-
-class Location(BaseModel):
-    lat: float
-    lon: float
-
-@router.post("/process")
-def process_location(location: Location):
-    result = run_pipeline(location.lat, location.lon)
-    return result
----
-
-import joblib
-from app.utils.indices import calculate_indices
-
-# โหลดโมเดล
-mlp = joblib.load("app/models/mlp_model.pkl")
-scaler_mlp_X = joblib.load("app/models/scaler_mlp_X.pkl")
-scaler_mlp_y = joblib.load("app/models/scaler_mlp_y.pkl")
-svr_agb = joblib.load("app/models/svr_agb_model.pkl")
-scaler_svr_X = joblib.load("app/models/scaler_svr_X.pkl")
-
-def get_sentinel_data(lat, lon):
-    # TODO: เขียนดึง Red, NIR จาก Sentinel Hub API
-    # ตอนนี้ใส่ mock ค่าไว้ก่อน
-    return {"red": 0.2, "nir": 0.6}
-
 def run_pipeline(lat, lon):
-    # 1. ดึงข้อมูลจาก Sentinel
     bands = get_sentinel_data(lat, lon)
-    red, nir = bands["red"], bands["nir"]
+    
+    # ส่ง DN ตรงๆ ไม่ต้องแปลง
+    dn_red = bands["dn_red"]
+    dn_nir = bands["dn_nir"]
 
-    # 2. ส่งเข้า indices
-    indices = calculate_indices(red, nir)
+    # indices และ AGB จะยังคงใช้ DN เหมือนกัน
+    indices = calculate_indices(dn_red, dn_nir)
 
-    # 3. แปลง indices เป็น array
     X = [[indices["NDVI"], indices["TNDVI"], indices["SR"], indices["SAVI"], indices["MSAVI2"]]]
     X_scaled = scaler_svr_X.transform(X)
 
-    # 4. พยากรณ์ AGB
     agb = svr_agb.predict(X_scaled)[0]
 
     return {
         "lat": lat,
         "lon": lon,
-        "red": red,
-        "nir": nir,
+        "dn_red": dn_red,
+        "dn_nir": dn_nir,
         "indices": indices,
         "AGB": float(agb)
+    }
+
+--
+def get_sentinel_data(lat, lon):
+    # mock DN raw ของ pixel
+    dn_red = 58    # ตัวอย่าง DN ของ Red band
+    dn_nir = 60    # ตัวอย่าง DN ของ NIR band
+
+    return {
+        "dn_red": dn_red,
+        "dn_nir": dn_nir
     }
