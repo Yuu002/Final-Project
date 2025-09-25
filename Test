@@ -4,8 +4,9 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>AGB Satellite Map</title>
-  <link rel="stylesheet" href="leaflet/leaflet.css" />
-  <link rel="stylesheet" href="leaflet-draw/leaflet.draw.css" />
+
+  <link rel="stylesheet" href="css/leaflet.css" />
+  <link rel="stylesheet" href="css/leaflet.draw.css" />
   <link rel="stylesheet" href="css/style.css" />
 </head>
 <body>
@@ -16,12 +17,14 @@
     <button id="fetch-btn">Fetch AGB</button>
   </div>
 
-  <script src="leaflet/leaflet.js"></script>
-  <script src="leaflet-draw/leaflet.draw.js"></script>
+  <script src="js/leaflet.js"></script>
+  <script src="js/leaflet.draw.js"></script>
   <script src="js/main.js"></script>
 </body>
 </html>
+
 --
+
 body, html {
   margin: 0;
   padding: 0;
@@ -59,18 +62,26 @@ button {
 button:hover {
   background-color: #1565c0;
 }
+
 --
+
 // Initialize map
 const map = L.map("map").setView([0, 0], 2);
 
-// Satellite Hybrid TileLayer (Sentinel Hub WMS)
-const tileUrl = "https://services.sentinel-hub.com/ogc/wms/<INSTANCE_ID>?";
-L.tileLayer(tileUrl + "layers=TRUE_COLOR&format=image/png&transparent=false&TIME=2025-01-01T00:00:00Z", {
+// Satellite Hybrid WMS (Sentinel Hub)
+const INSTANCE_ID = "<YOUR_INSTANCE_ID>"; // <-- เปลี่ยนเป็นของคุณ
+const wmsUrl = `https://services.sentinel-hub.com/ogc/wms/${INSTANCE_ID}`;
+
+L.tileLayer.wms(wmsUrl, {
+  layers: "TRUE_COLOR",
+  format: "image/png",
+  transparent: false,
   attribution: "Sentinel Hub",
+  time: "2025-01-01T00:00:00Z",
   maxZoom: 20
 }).addTo(map);
 
-// Leaflet Draw Control
+// Leaflet Draw
 const drawnItems = new L.FeatureGroup();
 map.addLayer(drawnItems);
 
@@ -89,7 +100,7 @@ map.addControl(drawControl);
 
 // Event: draw created
 map.on(L.Draw.Event.CREATED, function (e) {
-  drawnItems.clearLayers(); // ล้างก่อน
+  drawnItems.clearLayers();
   const layer = e.layer;
   drawnItems.addLayer(layer);
 
@@ -107,7 +118,7 @@ map.on(L.Draw.Event.CREATED, function (e) {
   document.getElementById("info").innerHTML = info;
 });
 
-// Event: fetch button → call backend
+// Fetch button → backend
 document.getElementById("fetch-btn").addEventListener("click", async () => {
   if (!map.selectedData) return alert("Select a point or area first");
 
@@ -133,7 +144,7 @@ document.getElementById("fetch-btn").addEventListener("click", async () => {
     if (!res.ok) throw new Error("API error");
     const data = await res.json();
 
-    // แสดงผลใน sidebar
+    // แสดง sidebar
     let html = "";
     if (map.selectedData.type === "point") {
       html += `Point:<br>Lat: ${payload.lat}<br>Lon: ${payload.lon}<br>`;
@@ -152,4 +163,120 @@ document.getElementById("fetch-btn").addEventListener("click", async () => {
     alert("Error fetching data from backend");
   }
 });
+
 --
+
+/* Leaflet core */
+.leaflet-container {
+  position: relative;
+  overflow: hidden;
+  background: #ddd;
+}
+
+.leaflet-tile {
+  position: absolute;
+  width: 256px;
+  height: 256px;
+}
+
+.leaflet-marker-icon,
+.leaflet-marker-shadow {
+  position: absolute;
+  display: block;
+  transform: translate3d(-50%, -50%, 0);
+}
+
+.leaflet-popup {
+  position: absolute;
+  text-align: center;
+  line-height: 1.2;
+}
+
+.leaflet-control {
+  position: relative;
+  z-index: 800;
+}
+
+.leaflet-bar {
+  box-shadow: 0 1px 5px rgba(0,0,0,0.65);
+  border-radius: 4px;
+}
+
+--
+
+/* Leaflet Draw controls */
+.leaflet-draw-toolbar {
+  background: #fff;
+  padding: 5px;
+  border-radius: 4px;
+  box-shadow: 0 1px 5px rgba(0,0,0,0.65);
+}
+
+.leaflet-draw-toolbar a {
+  display: inline-block;
+  width: 28px;
+  height: 28px;
+  text-align: center;
+  line-height: 28px;
+  cursor: pointer;
+}
+
+.leaflet-draw-draw-marker,
+.leaflet-draw-draw-rectangle,
+.leaflet-draw-draw-polygon {
+  background-color: #1976d2;
+  color: #fff;
+  border-radius: 4px;
+}
+
+--
+
+// Leaflet minimal for map + tile
+var L = {};
+L.map = function(id) {
+    const container = document.getElementById(id);
+    container.innerHTML = "";
+    return {
+        setView: function([lat, lon], zoom) {
+            this.lat = lat;
+            this.lon = lon;
+            this.zoom = zoom;
+            return this;
+        },
+        addLayer: function(layer) { this.layer = layer; },
+        on: function(event, callback) {
+            this._on = callback;
+        },
+        selectedData: null
+    };
+};
+
+L.tileLayer = function(url, options) {
+    return {
+        addTo: function(map) {
+            // แค่ placeholder ให้ map รู้จัก
+            console.log("TileLayer added: ", url);
+        }
+    };
+};
+
+L.FeatureGroup = function() {
+    return {
+        addLayer: function(layer){ this.layer = layer; },
+        clearLayers: function(){ this.layer = null; }
+    };
+};
+
+L.Control = {};
+L.Control.Draw = function(opts) {
+    return { addTo: function(map){ console.log("DrawControl added"); } };
+};
+
+L.Draw = { Event: { CREATED: "draw:created" } };
+
+L.Marker = function(latlng) { this.getLatLng = () => latlng; };
+
+--
+
+// Leaflet Draw minimal stub
+console.log("Leaflet Draw loaded (stub)");
