@@ -1,154 +1,79 @@
-html, body {
-    margin: 0;
-    padding: 0;
-    height: 100%;
-}
-#map {
-    width: 100%;
-    height: 80%;
-}
-#controls {
-    padding: 8px;
-    background: #fff;
-    border-top: 1px solid #ccc;
-}
-button {
-    margin-top: 4px;
-    cursor: pointer;
-    background: #1976d2;
-    color: #fff;
-    border: none;
-    padding: 6px 12px;
-    border-radius: 4px;
-}
-button:hover { background: #1565c0; }
-input { width: 100px; padding: 4px; margin-right: 4px; }
+import joblib
+import numpy as np
+import requests
+from app.utils.indices import calculate_indices
 
---
+# โหลดโมเดล
+mlp_model = joblib.load("app/models/mlp_model.pkl")
+scaler_X = joblib.load("app/models/scaler_mlp_X.pkl")
+scaler_y = joblib.load("app/models/scaler_mlp_y.pkl")
+svr_agb = joblib.load("app/models/svr_agb_model.pkl")
+scaler_agb_X = joblib.load("app/models/scaler_svr_X.pkl")
 
-(function (window, L) {
-    if (!L.Control) return;
+SENTINEL_HUB_URL = "https://services.sentinel-hub.com/api/v1/process"  # ตัวอย่าง
+INSTANCE_ID = "fbc0987..."  # ใส่ของคุณ
 
-    L.Control.FileLayerLoad = L.Control.extend({
-        options: { position: 'topleft', label: '📂', layerOptions: {} },
-        onAdd: function (map) {
-            var container = L.DomUtil.create('div', 'leaflet-control-filelayer');
-            var input = L.DomUtil.create('input', '', container);
-            input.type = 'file';
-            input.accept = '.geojson,.json';
-            input.style.display = 'none';
-
-            var label = L.DomUtil.create('label', '', container);
-            label.innerHTML = this.options.label;
-            label.style.cursor = 'pointer';
-
-            label.onclick = function () { input.click(); };
-
-            input.onchange = (e) => {
-                var file = e.target.files[0];
-                if (!file) return;
-                var reader = new FileReader();
-                reader.onload = (evt) => {
-                    var geojson = JSON.parse(evt.target.result);
-                    var layer = L.geoJSON(geojson, this.options.layerOptions).addTo(map);
-                    if (this.loader) this.loader.fire('data:loaded', { layer });
-                };
-                reader.readAsText(file);
-            };
-
-            return container;
+def get_raw_bands(lat, lon, date="2019-02-02"):
+    """
+    ดึง raw DN ของ Red (B04) และ NIR (B08) จาก Sentinel Hub
+    """
+    payload = {
+        "input": {
+            "bounds": {"geometry": {"type":"Point","coordinates":[lon, lat]}},
+            "data":[{"type":"S2L1C","dataFilter":{"timeRange":{"from":f"{date}T00:00:00Z","to":f"{date}T23:59:59Z"}}}]
         },
-        loader: new L.Evented()
-    });
+        "output":{"responses":[{"identifier":"default","format":{"type":"JSON"}}]}
+    }
+    headers = {"Authorization": f"Bearer {INSTANCE_ID}"}
 
-    L.control.fileLayerLoad = function (opts) { return new L.Control.FileLayerLoad(opts); };
+    r = requests.post(SENTINEL_HUB_URL, json=payload, headers=headers, timeout=30)
+    r.raise_for_status()
+    data = r.json()
 
-})(window, L);
+    # สมมติ data['BANDS'] เป็น dict {'B04': value, 'B08': value}
+    red = data['BANDS']['B04']
+    nir = data['BANDS']['B08']
+    return float(red), float(nir)
+    
 
---
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Satellite Map Frontend</title>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/normalize/4.2.0/normalize.min.css">
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.1.0/dist/leaflet.css">
-    <link rel="stylesheet" href="css/style.css">
-</head>
-<body>
-    <div id="map"></div>
-    <div id="controls">
-        <label>Latitude: <input type="number" step="0.000001" id="lat" value="0"></label>
-        <label>Longitude: <input type="number" step="0.000001" id="lon" value="0"></label>
-        <button id="send-btn">Send to Backend</button>
-        <div id="info"></div>
-    </div>
-
-    <script src="https://unpkg.com/leaflet@1.1.0/dist/leaflet.js"></script>
-    <script src="https://unpkg.com/togeojson@0.14.2"></script>
-    <script src="js/leaflet.filelayer.js"></script>
-    <script src="js/main.js"></script>
-</body>
-</html>
-
---
-
-(function(window){
-    'use strict';
-
-    function initMap(){
-        var L = window.L;
-
-        // MapTiler Hybrid
-        var osm = L.tileLayer('https://api.maptiler.com/maps/hybrid/{z}/{x}/{y}.jpg?key=SorpWvu9Cx7zkYKrxJbN', {
-            attribution: 'Map data &copy; 2013 OpenStreetMap contributors'
-        });
-
-        var map = L.map('map', { center:[0,0], zoom:2 }).addLayer(osm);
-
-        // Optional FileLayer control
-        if(L.Control.FileLayerLoad){
-            var style = { color:'red', weight:2, opacity:1.0, fillOpacity:0.5 };
-            var control = L.control.fileLayerLoad({ layerOptions: style }).addTo(map);
-            control.loader.on('data:loaded', function(e){
-                console.log("Loaded file layer:", e.layer);
-            });
-        }
-
-        // Click map to select point
-        var selectedLatLng = null;
-        map.on('click', function(e){
-            selectedLatLng = e.latlng;
-            document.getElementById('lat').value = selectedLatLng.lat.toFixed(6);
-            document.getElementById('lon').value = selectedLatLng.lng.toFixed(6);
-        });
-
-        // Send to backend
-        document.getElementById('send-btn').addEventListener('click', async function(){
-            var lat = parseFloat(document.getElementById('lat').value);
-            var lon = parseFloat(document.getElementById('lon').value);
-            var payload = { lat: lat, lon: lon, date: "2019-02-02" }; // locked date
-
-            try{
-                const res = await fetch("http://127.0.0.1:8000/api/process", {
-                    method:"POST",
-                    headers: {"Content-Type":"application/json"},
-                    body: JSON.stringify(payload)
-                });
-                const data = await res.json();
-                var info = `AGB: ${data.agb}<br>`;
-                for(const key in data.indices){
-                    info += `${key}: ${data.indices[key]}<br>`;
-                }
-                document.getElementById('info').innerHTML = info;
-            }catch(err){
-                console.error(err);
-                alert("Error fetching backend");
-            }
-        });
+def run_pipeline(lat, lon, date="2019-02-02"):
+    red, nir = get_raw_bands(lat, lon, date)
+    
+    # ดึง output จาก MLP
+    X_input = np.array([[red, nir]])  # ถ้า MLP ต้อง 4 band ปรับเพิ่มค่า mock/0
+    X_scaled = scaler_X.transform(X_input)
+    y_scaled = mlp_model.predict(X_scaled)
+    y_pred = scaler_y.inverse_transform(y_scaled)
+    
+    # คำนวณ indices
+    indices = calculate_indices(red, nir)
+    
+    # คำนวณ AGB
+    X_agb = np.array([[indices["NDVI"], indices["TNDVI"], indices["SR"], indices["SAVI"], indices["MSAVI2"]]])
+    X_agb_scaled = scaler_agb_X.transform(X_agb)
+    agb_pred = svr_agb.predict(X_agb_scaled)[0]
+    
+    return {
+        "red": red,
+        "nir": nir,
+        "indices": indices,
+        "agb": float(agb_pred)
     }
 
-    window.addEventListener('load', initMap);
-})(window);
+--
 
+from fastapi import APIRouter
+from pydantic import BaseModel
+from app.services.ml_pipeline import run_pipeline
+
+router = APIRouter()
+
+class ProcessRequest(BaseModel):
+    lat: float
+    lon: float
+    date: str = "2019-02-02"
+
+@router.post("/process")
+def process_data(req: ProcessRequest):
+    result = run_pipeline(req.lat, req.lon, req.date)
+    return result
