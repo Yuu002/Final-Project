@@ -1,69 +1,107 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <title>Leaflet Filelayer </title>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/normalize/4.2.0/normalize.min.css">
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.1.0/dist/leaflet.css">
-    <style>
-      .icon {
-        max-width: 70%;
-        max-height: 70%;
-        margin: 4px;
-      }
-    </style>
-</head>
-<body>
-    <div id="map" style="width: 100vw; height: 100vh;"></div>
-</body>
-<script src="https://unpkg.com/leaflet@1.1.0/dist/leaflet.js"></script>
-<script src="https://unpkg.com/togeojson@0.14.2"></script>
-<script src="../src/leaflet.filelayer.js"></script>
-<script>
-  (function (window) {
-    'use strict';
+# ===== svr_agb_train.py =====
+import pandas as pd
+from sklearn.preprocessing import StandardScaler
+from sklearn.svm import SVR
+from sklearn.metrics import mean_squared_error, r2_score
+from sklearn.model_selection import train_test_split
+import numpy as np
+import joblib
 
-    function initMap() {
-        var control;
-        var L = window.L;
-        var osm = L.tileLayer('https://api.maptiler.com/maps/hybrid/{z}/{x}/{y}.jpg?key=SorpWvu9Cx7zkYKrxJbN', {
-            attribution: 'Map data &copy; 2013 OpenStreetMap contributors'
-        });
-        var map = L.map('map', {
-            center: [0, 0],
-            zoom: 2
-        }).addLayer(osm);
-        var style = {
-            color: 'red',
-            opacity: 1.0,
-            fillOpacity: 1.0,
-            weight: 2,
-            clickable: false
-        };
-        L.Control.FileLayerLoad.LABEL = '<img class="icon" src="../docs/folder.svg" alt="file icon"/>';
-        control = L.Control.fileLayerLoad({
-            fitBounds: true,
-            layerOptions: {
-                style: style,
-                pointToLayer: function (data, latlng) {
-                    return L.circleMarker(
-                        latlng,
-                        { style: style }
-                    );
-                }
-            }
-        });
-        control.addTo(map);
-        control.loader.on('data:loaded', function (e) {
-            var layer = e.layer;
-            console.log(layer);
-        });
+# Load dataset
+data = pd.read_excel("AGB_Data.xlsx")
+
+# Example: Features are 5 vegetation indices
+X = data[["NDVI", "TNDVI", "SR", "SAVI", "MSAVI2"]].values
+y = data["AGB"].values  # ต้องเป็น 1D array
+
+# Scale features
+scaler_X = StandardScaler()
+X_scaled = scaler_X.fit_transform(X)
+
+# Train/test split
+X_train, X_test, y_train, y_test = train_test_split(
+    X_scaled, y, test_size=0.2, random_state=42
+)
+
+# Train SVR
+model = SVR(kernel="rbf", C=100, gamma=0.1, epsilon=0.1)
+model.fit(X_train, y_train)
+
+# Evaluate
+y_pred = model.predict(X_test)
+mse = mean_squared_error(y_test, y_pred)
+rmse = np.sqrt(mse)
+r2 = r2_score(y_test, y_pred)
+print(f"SVM (RBF) -> R²: {r2:.4f}, RMSE: {rmse:.4f}")
+
+# Save model + scaler
+joblib.dump(model, "svr_agb_model.pkl")
+joblib.dump(scaler_X, "scaler_svr_X.pkl")
+print("✅ Saved svr_agb_model.pkl, scaler_svr_X.pkl")
+
+# ===== mlp_train.py =====
+import pandas as pd
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import train_test_split
+from sklearn.neural_network import MLPRegressor
+import joblib
+
+# Load dataset
+data = pd.read_csv("bands_extracted.csv")
+
+# Features (input bands)
+X = data[["Band1", "Band2", "Band3", "Band4"]].values
+
+# Target (example: output bands or indices)
+y = data[["Blue (B1)", "Green (B2)", "Red (B3)", "NIR (B4)"]].values
+
+# Scale features and outputs
+scaler_X = StandardScaler()
+X_scaled = scaler_X.fit_transform(X)
+
+scaler_y = StandardScaler()
+y_scaled = scaler_y.fit_transform(y)
+
+# Train/test split
+X_train, X_test, y_train, y_test = train_test_split(
+    X_scaled, y_scaled, test_size=0.2, random_state=42
+)
+
+# Train MLP
+mlp = MLPRegressor(hidden_layer_sizes=(64, 64, 32), 
+                   max_iter=500, random_state=42)
+mlp.fit(X_train, y_train)
+
+# Save model and scalers
+joblib.dump(mlp, "mlp_model.pkl")
+joblib.dump(scaler_X, "scaler_mlp_X.pkl")
+joblib.dump(scaler_y, "scaler_mlp_y.pkl")
+print("✅ Saved mlp_model.pkl, scaler_mlp_X.pkl, scaler_mlp_y.pkl")
+
+# indices.py
+import numpy as np
+
+def calculate_indices(red, nir, blue=None, green=None, L=0.5):
+    """
+    คำนวณ NDVI, TNDVI, SR, SAVI, MSAVI2
+    red, nir, blue, green สามารถเป็น scalar หรือ numpy array
+    คืนค่าเป็น dict ของค่าเฉลี่ย (float)
+    """
+    red = np.array(red, dtype=float)
+    nir = np.array(nir, dtype=float)
+
+    L = 0.5
+    ndvi = (nir - red) / (nir + red)
+    # TNDVI: สูตรที่ใช้ในโปรเจค (ระวัง domain ของ sqrt)
+    tndvi = np.sqrt(np.clip(ndvi + 0.5, a_min=0.0, a_max=None))
+    sr = nir / red
+    savi = ((1 + L) * (nir - red)) / (nir + red + L)
+    msavi2 = (2 * nir + 1 - np.sqrt((2 * nir + 1) ** 2 - 8 * (nir - red))) / 2
+
+    return {
+        "NDVI": float(np.nanmean(ndvi)),
+        "TNDVI": float(np.nanmean(tndvi)),
+        "SR": float(np.nanmean(sr)),
+        "SAVI": float(np.nanmean(savi)),
+        "MSAVI2": float(np.nanmean(msavi2)),
     }
-
-    window.addEventListener('load', function () {
-        initMap();
-    });
-}(window));
-</script>
-</html>
