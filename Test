@@ -1,4 +1,155 @@
-<TileLayer
-  url={`https://services.sentinel-hub.com/ogc/wmts/<INSTANCE_ID>?layer=TRUE_COLOR&style=&tilematrixset=GoogleMapsCompatible&Service=WMTS&Request=GetTile&Version=1.0.0&Format=image/png&TileMatrix={z}&TileRow={y}&TileCol={x}`}
-  attribution="Sentinel Hub"
-/>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AGB Satellite Map</title>
+  <link rel="stylesheet" href="leaflet/leaflet.css" />
+  <link rel="stylesheet" href="leaflet-draw/leaflet.draw.css" />
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <div id="map"></div>
+  <div class="sidebar" id="sidebar">
+    <h2>Selected Area / Point</h2>
+    <div id="info">No selection</div>
+    <button id="fetch-btn">Fetch AGB</button>
+  </div>
+
+  <script src="leaflet/leaflet.js"></script>
+  <script src="leaflet-draw/leaflet.draw.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>
+--
+body, html {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
+#map {
+  width: 100%;
+  height: 100%;
+}
+
+.sidebar {
+  width: 300px;
+  background-color: #fff;
+  border-left: 1px solid #ddd;
+  padding: 16px;
+  position: absolute;
+  top: 0;
+  right: 0;
+  height: 100%;
+  overflow-y: auto;
+  box-shadow: -2px 0 5px rgba(0,0,0,0.1);
+}
+
+button {
+  margin-top: 8px;
+  cursor: pointer;
+  background-color: #1976d2;
+  color: #fff;
+  border: none;
+  padding: 8px 12px;
+  border-radius: 4px;
+}
+
+button:hover {
+  background-color: #1565c0;
+}
+--
+// Initialize map
+const map = L.map("map").setView([0, 0], 2);
+
+// Satellite Hybrid TileLayer (Sentinel Hub WMS)
+const tileUrl = "https://services.sentinel-hub.com/ogc/wms/<INSTANCE_ID>?";
+L.tileLayer(tileUrl + "layers=TRUE_COLOR&format=image/png&transparent=false&TIME=2025-01-01T00:00:00Z", {
+  attribution: "Sentinel Hub",
+  maxZoom: 20
+}).addTo(map);
+
+// Leaflet Draw Control
+const drawnItems = new L.FeatureGroup();
+map.addLayer(drawnItems);
+
+const drawControl = new L.Control.Draw({
+  draw: {
+    polyline: false,
+    polygon: true,
+    rectangle: true,
+    circle: false,
+    circlemarker: false,
+    marker: true
+  },
+  edit: { featureGroup: drawnItems }
+});
+map.addControl(drawControl);
+
+// Event: draw created
+map.on(L.Draw.Event.CREATED, function (e) {
+  drawnItems.clearLayers(); // ล้างก่อน
+  const layer = e.layer;
+  drawnItems.addLayer(layer);
+
+  let info = "";
+  if (layer instanceof L.Marker) {
+    const lat = layer.getLatLng().lat;
+    const lon = layer.getLatLng().lng;
+    info = `Point selected:<br>Lat: ${lat.toFixed(6)}<br>Lon: ${lon.toFixed(6)}`;
+    map.selectedData = { type: "point", lat, lon };
+  } else {
+    const bounds = layer.getBounds();
+    info = `Area selected:<br>SW: ${bounds.getSouthWest().lat.toFixed(6)}, ${bounds.getSouthWest().lng.toFixed(6)}<br>NE: ${bounds.getNorthEast().lat.toFixed(6)}, ${bounds.getNorthEast().lng.toFixed(6)}`;
+    map.selectedData = { type: "bbox", bounds };
+  }
+  document.getElementById("info").innerHTML = info;
+});
+
+// Event: fetch button → call backend
+document.getElementById("fetch-btn").addEventListener("click", async () => {
+  if (!map.selectedData) return alert("Select a point or area first");
+
+  let payload = {};
+  if (map.selectedData.type === "point") {
+    payload = { lat: map.selectedData.lat, lon: map.selectedData.lon };
+  } else {
+    const b = map.selectedData.bounds;
+    payload = {
+      lat_min: b.getSouthWest().lat,
+      lon_min: b.getSouthWest().lng,
+      lat_max: b.getNorthEast().lat,
+      lon_max: b.getNorthEast().lng
+    };
+  }
+
+  try {
+    const res = await fetch("http://127.0.0.1:8000/api/process", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    if (!res.ok) throw new Error("API error");
+    const data = await res.json();
+
+    // แสดงผลใน sidebar
+    let html = "";
+    if (map.selectedData.type === "point") {
+      html += `Point:<br>Lat: ${payload.lat}<br>Lon: ${payload.lon}<br>`;
+    } else {
+      html += `Area:<br>SW: ${payload.lat_min}, ${payload.lon_min}<br>NE: ${payload.lat_max}, ${payload.lon_max}<br>`;
+    }
+    html += "<h3>Indices:</h3>";
+    for (const key in data.indices) {
+      html += `${key}: ${data.indices[key].toFixed(4)}<br>`;
+    }
+    html += `<h3>AGB:</h3>${data.agb.toFixed(2)}`;
+    document.getElementById("info").innerHTML = html;
+
+  } catch (err) {
+    console.error(err);
+    alert("Error fetching data from backend");
+  }
+});
+--
