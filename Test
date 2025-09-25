@@ -1,69 +1,90 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <title>Leaflet Filelayer </title>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/normalize/4.2.0/normalize.min.css">
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.1.0/dist/leaflet.css">
-    <style>
-      .icon {
-        max-width: 70%;
-        max-height: 70%;
-        margin: 4px;
-      }
-    </style>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Satellite Map with Sentinel Hub</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+    <link rel="stylesheet" href="css/style.css"/>
 </head>
 <body>
-    <div id="map" style="width: 100vw; height: 100vh;"></div>
+    <div id="map"></div>
+    <div class="sidebar">
+        <label for="date">Select Date:</label>
+        <input type="date" id="date" value="2025-01-01"/>
+        <button id="fetch-btn">Fetch AGB</button>
+        <div id="info">No selection</div>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="js/main.js"></script>
 </body>
-<script src="https://unpkg.com/leaflet@1.1.0/dist/leaflet.js"></script>
-<script src="https://unpkg.com/togeojson@0.14.2"></script>
-<script src="../src/leaflet.filelayer.js"></script>
-<script>
-  (function (window) {
-    'use strict';
-
-    function initMap() {
-        var control;
-        var L = window.L;
-        var osm = L.tileLayer('https://api.maptiler.com/maps/hybrid/{z}/{x}/{y}.jpg?key=SorpWvu9Cx7zkYKrxJbN', {
-            attribution: 'Map data &copy; 2013 OpenStreetMap contributors'
-        });
-        var map = L.map('map', {
-            center: [0, 0],
-            zoom: 2
-        }).addLayer(osm);
-        var style = {
-            color: 'red',
-            opacity: 1.0,
-            fillOpacity: 1.0,
-            weight: 2,
-            clickable: false
-        };
-        L.Control.FileLayerLoad.LABEL = '<img class="icon" src="../docs/folder.svg" alt="file icon"/>';
-        control = L.Control.fileLayerLoad({
-            fitBounds: true,
-            layerOptions: {
-                style: style,
-                pointToLayer: function (data, latlng) {
-                    return L.circleMarker(
-                        latlng,
-                        { style: style }
-                    );
-                }
-            }
-        });
-        control.addTo(map);
-        control.loader.on('data:loaded', function (e) {
-            var layer = e.layer;
-            console.log(layer);
-        });
-    }
-
-    window.addEventListener('load', function () {
-        initMap();
-    });
-}(window));
-</script>
 </html>
+--
+
+html, body { margin:0; padding:0; height:100%; }
+#map { width: 100%; height: 100%; }
+.sidebar {
+    width: 300px;
+    position: absolute;
+    right: 0;
+    top: 0;
+    height: 100%;
+    background: #fff;
+    padding: 16px;
+    overflow-y: auto;
+    box-shadow: -2px 0 5px rgba(0,0,0,0.1);
+}
+button { margin-top: 8px; cursor: pointer; background: #1976d2; color:#fff; border:none; padding:8px 12px; border-radius:4px; }
+button:hover { background: #1565c0; }
+--
+
+// Initialize map
+const map = L.map("map").setView([13.7563, 100.5018], 6); // Bangkok
+
+// Sentinel Hub Satellite Hybrid layer (WMS)
+const INSTANCE_ID = "<YOUR_INSTANCE_ID>";
+let currentDate = document.getElementById("date").value;
+
+let wmsLayer = L.tileLayer.wms(`https://services.sentinel-hub.com/ogc/wms/${INSTANCE_ID}`, {
+    layers: "TRUE_COLOR",
+    format: "image/png",
+    transparent: false,
+    attribution: "Sentinel Hub",
+    time: currentDate,
+    maxZoom: 20
+}).addTo(map);
+
+// Update layer when date changes
+document.getElementById("date").addEventListener("change", (e) => {
+    currentDate = e.target.value;
+    wmsLayer.setParams({time: currentDate});
+});
+
+// Placeholder: draw point/area selection
+let selectedLatLng = null;
+map.on('click', function(e) {
+    selectedLatLng = e.latlng;
+    document.getElementById("info").innerHTML = `Lat: ${e.latlng.lat.toFixed(6)}, Lon: ${e.latlng.lng.toFixed(6)}`;
+});
+
+// Fetch AGB
+document.getElementById("fetch-btn").addEventListener("click", async () => {
+    if(!selectedLatLng) return alert("Click on map first!");
+    const payload = { lat: selectedLatLng.lat, lon: selectedLatLng.lng, date: currentDate };
+    try {
+        const res = await fetch("http://127.0.0.1:8000/api/process", {
+            method:"POST",
+            headers: {"Content-Type":"application/json"},
+            body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        document.getElementById("info").innerHTML += `<br>AGB: ${data.agb.toFixed(2)}<br>`;
+        for(const key in data.indices){
+            document.getElementById("info").innerHTML += `${key}: ${data.indices[key].toFixed(4)}<br>`;
+        }
+    } catch(err) {
+        console.error(err);
+        alert("Error fetching data from backend");
+    }
+});
