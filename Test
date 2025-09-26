@@ -1,1 +1,14 @@
-ImportError: cannot import name 'fetch_bands_from_sentinelhub' from 'backend.utils.sentinelhub_api' (C:\Users\PC-ICT-399\Desktop\app\backend\utils\sentinelhub_api.py)
+fastapi
+uvicorn
+requests
+joblib
+numpy
+pandas
+scikit-learn
+--services:
+  - type: web
+    name: agb-app
+    env: python
+    plan: free
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "uvicorn backend.app:app --host 0.0.0.0 --port 10000"
