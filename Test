@@ -4,6 +4,7 @@ import joblib
 import os
 import numpy as np
 from indices import calculate_indices
+from sentinelhub import SHConfig, BBox, CRS, SentinelHubRequest, MimeType, DataCollection
 
 app = FastAPI()
 
@@ -23,56 +24,99 @@ scaler_mlp_y = joblib.load(SCALER_MLP_Y_PATH)
 svr_agb_model = joblib.load(SVR_AGB_MODEL_PATH)
 scaler_svr_X = joblib.load(SCALER_SVR_X_PATH)
 
-# ===== debug =====
 print("BASE_DIR =", BASE_DIR)
 print("Files in BASE_DIR:", os.listdir(BASE_DIR))
 
 # ===== Schema =====
 class SentinelInput(BaseModel):
-    bands: list[float]  # [Band1, Band2, Band3, Band4] จาก Sentinel
+    bands: list[float]  # [Band1, Band2, Band3, Band4]
+
+class CoordInput(BaseModel):
+    lat: float
+    lon: float
 
 # ===== ฟังก์ชัน scale bands 40-78 =====
 def scale_bands_to_range(bands, min_val=40, max_val=78):
     bands = np.array(bands, dtype=float)
     if bands.max() - bands.min() == 0:
-        # ถ้าทุกค่าเท่ากัน จะ return ค่ากลาง
         return np.full_like(bands, (min_val+max_val)//2, dtype=int)
     bands_norm = (bands - bands.min()) / (bands.max() - bands.min())
     bands_scaled = bands_norm * (max_val - min_val) + min_val
     return np.round(bands_scaled).astype(int)
 
-# ===== Endpoint =====
+# ===== ดึง Sentinel bands จาก lat/lon =====
+def get_sentinel_bands(lat, lon):
+    config = SHConfig()
+    config.sh_client_id = "YOUR_CLIENT_ID"
+    config.sh_client_secret = "YOUR_CLIENT_SECRET"
+
+    bbox = BBox(bbox=[lon, lat, lon, lat], crs=CRS.WGS84)
+    
+    request = SentinelHubRequest(
+        evalscript="""
+            //VERSION=3
+            function setup() {
+                return { input: ["B02","B03","B04","B08"], output: { bands: 4 } };
+            }
+            function evaluatePixel(sample) {
+                return [sample.B02*100, sample.B03*100, sample.B04*100, sample.B08*100];
+            }
+        """,
+        input_data=[SentinelHubRequest.input_data(DataCollection.SENTINEL2_L2A)],
+        responses=[SentinelHubRequest.output_response('default', MimeType.TIFF)],
+        bbox=bbox,
+        size=(1,1),
+        config=config
+    )
+    
+    data = request.get_data()[0][0][0]  # shape (1,1,4)
+    return np.round(data).astype(int).tolist()
+
+# ===== Endpoint: ส่ง Sentinel bands ตรง ๆ =====
 @app.post("/predict_all")
 def predict_all(data: SentinelInput):
-    # 1. scale Sentinel bands → 40–78
     sentinel_bands_int = scale_bands_to_range(data.bands, 40, 78)
     
-    # 2. MLP → Ground bands
     X_scaled = scaler_mlp_X.transform([sentinel_bands_int])
     ground_bands_scaled = mlp_model.predict(X_scaled)
     ground_bands = scaler_mlp_y.inverse_transform(ground_bands_scaled)[0]
-
-    # 3. scale Ground bands → 40–78 integer
     ground_bands_int = scale_bands_to_range(ground_bands, 40, 78)
     blue, green, red, nir = ground_bands_int
-
-    # 4. คำนวณ indices
+    
     indices = calculate_indices(red=red, nir=nir, blue=blue, green=green)
-
-    # 5. SVR → AGB
     indices_array = np.array([[indices["NDVI"], indices["TNDVI"], indices["SR"],
                                indices["SAVI"], indices["MSAVI2"]]])
     indices_scaled = scaler_svr_X.transform(indices_array)
     agb_pred = svr_agb_model.predict(indices_scaled)[0]
-
+    
     return {
         "sentinel_bands": sentinel_bands_int.tolist(),
-        "ground_bands": {
-            "Blue": int(blue),
-            "Green": int(green),
-            "Red": int(red),
-            "NIR": int(nir)
-        },
+        "ground_bands": {"Blue": int(blue), "Green": int(green), "Red": int(red), "NIR": int(nir)},
+        "indices": indices,
+        "AGB_prediction": float(agb_pred)
+    }
+
+# ===== Endpoint: ส่ง lat/lon → ดึง Sentinel bands =====
+@app.post("/predict_from_coords")
+def predict_from_coords(data: CoordInput):
+    sentinel_bands = get_sentinel_bands(data.lat, data.lon)
+    sentinel_bands_int = scale_bands_to_range(sentinel_bands, 40, 78)
+    
+    X_scaled = scaler_mlp_X.transform([sentinel_bands_int])
+    ground_bands_scaled = mlp_model.predict(X_scaled)
+    ground_bands = scaler_mlp_y.inverse_transform(ground_bands_scaled)[0]
+    ground_bands_int = scale_bands_to_range(ground_bands, 40, 78)
+    blue, green, red, nir = ground_bands_int
+    
+    indices = calculate_indices(red=red, nir=nir, blue=blue, green=green)
+    indices_array = np.array([[indices["NDVI"], indices["TNDVI"], indices["SR"],
+                               indices["SAVI"], indices["MSAVI2"]]])
+    indices_scaled = scaler_svr_X.transform(indices_array)
+    agb_pred = svr_agb_model.predict(indices_scaled)[0]
+    
+    return {
+        "sentinel_bands": sentinel_bands_int,
+        "ground_bands": {"Blue": int(blue), "Green": int(green), "Red": int(red), "NIR": int(nir)},
         "indices": indices,
         "AGB_prediction": float(agb_pred)
     }
