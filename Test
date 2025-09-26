@@ -1,2 +1,73 @@
-Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+from fastapi import FastAPI
+from pydantic import BaseModel
+import joblib
+import os
+import numpy as np
+from indices import calculate_indices
 
+app = FastAPI()
+
+# ===== กำหนด path dynamic สำหรับทุกไฟล์ =====
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# MLP model + scalers
+MLP_MODEL_PATH = os.path.join(BASE_DIR, "mlp_model.pkl")
+SCALER_MLP_X_PATH = os.path.join(BASE_DIR, "scaler_mlp_X.pkl")
+SCALER_MLP_Y_PATH = os.path.join(BASE_DIR, "scaler_mlp_y.pkl")
+
+mlp_model = joblib.load(MLP_MODEL_PATH)
+scaler_mlp_X = joblib.load(SCALER_MLP_X_PATH)
+scaler_mlp_y = joblib.load(SCALER_MLP_Y_PATH)
+
+# SVR AGB model + scaler
+SVR_AGB_MODEL_PATH = os.path.join(BASE_DIR, "svr_agb_model.pkl")
+SCALER_SVR_X_PATH = os.path.join(BASE_DIR, "scaler_svr_X.pkl")
+
+svr_agb_model = joblib.load(SVR_AGB_MODEL_PATH)
+scaler_svr_X = joblib.load(SCALER_SVR_X_PATH)
+
+
+# ===== Schema สำหรับ input =====
+class SentinelInput(BaseModel):
+    bands: list[float]  # [Band1, Band2, Band3, Band4] จาก Sentinel
+
+
+# ===== Endpoint รวมขั้นตอนทั้งหมด =====
+@app.post("/predict_all")
+def predict_all(data: SentinelInput):
+    # 1. รับ Sentinel bands
+    X = np.array([data.bands])
+    X_scaled = scaler_mlp_X.transform(X)
+
+    # 2. MLP → Ground bands
+    ground_bands_scaled = mlp_model.predict(X_scaled)
+    ground_bands = scaler_mlp_y.inverse_transform(ground_bands_scaled)[0]
+
+    blue, green, red, nir = ground_bands
+
+    # 3. คำนวณดัชนี
+    indices = calculate_indices(red=red, nir=nir, blue=blue, green=green)
+
+    # 4. SVR → AGB
+    indices_array = np.array([[indices["NDVI"], indices["TNDVI"], indices["SR"],
+                               indices["SAVI"], indices["MSAVI2"]]])
+    indices_scaled = scaler_svr_X.transform(indices_array)
+    agb_pred = svr_agb_model.predict(indices_scaled)[0]
+
+    return {
+        "input_bands": data.bands,
+        "ground_bands": {
+            "Blue": float(blue),
+            "Green": float(green),
+            "Red": float(red),
+            "NIR": float(nir)
+        },
+        "indices": indices,
+        "AGB_prediction": float(agb_pred)
+    }
+
+
+# ===== สำหรับรัน uvicorn ตรงๆ =====
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=False)
