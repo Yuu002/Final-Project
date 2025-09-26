@@ -1,103 +1,87 @@
 Client ID: 5fe79f43-3c2d-4cf6-9184-478e247504b7
 Client secret: uYQ6E6NvUDucLx0yRqz4zrUyeuWcX09U
 
-from typing import Dict, Optional
-import math
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from typing import Optional
+import os
 
-def _to_reflectance(val_scaled: float) -> Optional[float]:
-    """แปลง scaled-by-100 -> reflectance 0-1"""
-    if val_scaled is None:
-        return None
-    try:
-        return float(val_scaled) / 100.0
-    except Exception:
-        return None
+from backend.utils.sentinelhub_api import fetch_bands_from_sentinelhub
+from backend.utils.preprocess import mlp_predict_from_ints, svr_predict_agb
+from backend.indices import compute_indices
 
-def compute_indices(bands_scaled: Dict[str, float]) -> Dict[str, Optional[float]]:
-    """
-    bands_scaled: {"red":32.87,"nir":45.12,...} scaled-by-100
-    คืน dict ของ indices rounded 2 ตำแหน่ง
-    """
-    red = _to_reflectance(bands_scaled.get("red"))
-    nir = _to_reflectance(bands_scaled.get("nir"))
-    green = _to_reflectance(bands_scaled.get("green"))
-    swir = _to_reflectance(bands_scaled.get("swir"))
-    blue = _to_reflectance(bands_scaled.get("blue"))
+app = FastAPI(title="Sentinel -> MLP -> Indices -> AGB API")
 
-    def safe_div(a, b):
-        if a is None or b is None or (a+b)==0:
-            return None
-        return a / b
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-    # NDVI
-    ndvi = safe_div(nir-red, nir+red) if nir is not None and red is not None else None
+@app.get("/predict")
+async def predict(lat: float, lng: float, mode: Optional[str]="mock"):
+    instance_id = os.getenv("SENTINELHUB_INSTANCE_ID")
+    api_key = os.getenv("SENTINELHUB_API_KEY")
+    bands_int = fetch_bands_from_sentinelhub(lat,lng,instance_id,api_key)
 
-    # EVI
-    evi = safe_div(nir-red, (nir + 6*red - 7.5*blue +1)) * 2.5 if nir is not None and red is not None and blue is not None else None
+    if not bands_int:
+        raise HTTPException(status_code=500, detail="No bands from sentinelhub")
 
-    # GNDVI
-    gndvi = safe_div(nir-green, nir+green) if nir is not None and green is not None else None
-
-    # SAVI
-    L = 0.5
-    savi = ((nir-red)*(1+L)) / (nir+red+L) if nir is not None and red is not None else None
-
-    # NDMI
-    ndmi = safe_div(nir-swir, nir+swir) if nir is not None and swir is not None else None
-
-    def _round(v):
-        return round(v,2) if v is not None and not math.isnan(v) else None
+    bands_pred = mlp_predict_from_ints(bands_int)
+    indices = compute_indices(bands_pred)
+    agb = svr_predict_agb(indices)
 
     return {
-        "ndvi": _round(ndvi),
-        "evi": _round(evi),
-        "gndvi": _round(gndvi),
-        "savi": _round(savi),
-        "ndmi": _round(ndmi)
+        "coordinates":{"lat":round(lat,6),"lng":round(lng,6)},
+        "bands_predicted": bands_pred,
+        "indices": indices,
+        "agb":{"value": agb,"unit":"Mg/ha"},
+        "bands_input_int": bands_int
     }
+
+if __name__=="__main__":
+    import uvicorn
+    uvicorn.run("backend.main:app", host="0.0.0.0", port=8000, reload=True)
 --
-import os
-import joblib
-import numpy as np
-from typing import Dict, Optional
 
-MODEL_DIR = os.path.join(os.path.dirname(__file__), "..", "models")
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>AGB Map</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<link rel="stylesheet" href="style.css"/>
+</head>
+<body>
+<div id="map"></div>
+<aside id="panel">
+<h2>Clicked point</h2>
+<div id="info">คลิกบนแผนที่เพื่อดูค่า</div>
+</aside>
 
-def _load_pkl(name):
-    path = os.path.join(MODEL_DIR, name)
-    return joblib.load(path) if os.path.exists(path) else None
-
-mlp_model = _load_pkl("mlp_model.pkl")
-svr_agb_model = _load_pkl("svr_agb_model.pkl")
-scaler_mlp_X = _load_pkl("scaler_mlp_X.pkl")
-scaler_mlp_y = _load_pkl("scaler_mlp_y.pkl")
-scaler_svr_X = _load_pkl("scaler_svr_X.pkl")
-
-def mlp_predict_from_ints(bands_int: Dict[str,int]) -> Dict[str,float]:
-    """รับ bands int -> คืน predicted bands float (scaled-by-100)"""
-    feature_order = ["red","green","blue","nir","swir"]
-    X = np.array([float(bands_int.get(f,0)) for f in feature_order]).reshape(1,-1)
-
-    if mlp_model is not None:
-        Xs = scaler_mlp_X.transform(X) if scaler_mlp_X else X
-        y_pred = mlp_model.predict(Xs)
-        y_pred = scaler_mlp_y.inverse_transform(y_pred.reshape(-1,1)).flatten() if scaler_mlp_y else y_pred.flatten()
-    else:
-        # mock
-        y_pred = (X*0.76).flatten()
-
-    return {feature_order[i]: round(float(y_pred[i]),2) for i in range(len(feature_order))}
-
-def svr_predict_agb(indices: Dict[str,Optional[float]]) -> float:
-    """indices dict -> AGB float 2 ตำแหน่ง"""
-    idx_order = ["ndvi","evi","gndvi","savi","ndmi"]
-    X = np.array([indices.get(k,0.0) for k in idx_order]).reshape(1,-1)
-
-    if svr_agb_model is not None:
-        Xs = scaler_svr_X.transform(X) if scaler_svr_X else X
-        agb = float(svr_agb_model.predict(Xs).flatten()[0])
-    else:
-        # mock
-        agb = 50 + 400*max(0.0,indices.get("ndvi") or 0.0)
-
-    return round(agb,2)
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="script.js"></script>
+</body>
+</html>
+--
+html,body,#map { height:100%; margin:0; padding:0; }
+#map { width: calc(100% - 320px); float:left; }
+#panel {
+  width: 320px;
+  position: fixed;
+  right:0;
+  top:0;
+  bottom:0;
+  background:#f7f7f8;
+  padding:12px;
+  box-shadow:-2px 0 6px rgba(0,0,0,0.08);
+  overflow:auto;
+  font-family: system-ui, Arial, sans-serif;
+}
+#panel h2 { margin-top:0; }
+pre { white-space: pre-wrap; word-break: break-word; }
+--
+const map = L.map
