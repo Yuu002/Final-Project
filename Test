@@ -1,9 +1,9 @@
+// Evalscript V3
+// จะส่งออก Blue, Green, Red, NIR แบบจำนวนเต็ม (reflectance*100)
 function setup() {
   return {
     input: ["B02", "B03", "B04", "B08"], // Blue, Green, Red, NIR
-    output: [
-      { id: "bands", bands: 4, sampleType: "UINT16" }
-    ]
+    output: { bands: 4, sampleType: "UINT16" }
   };
 }
 
