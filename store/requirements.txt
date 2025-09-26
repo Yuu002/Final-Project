@@ -1,0 +1,13 @@
+streamlit
+rasterio
+pyproj
+joblib
+numpy
+pandas
+plotly
+scikit-learn
+openpyxl
+matplotlib
+shapely
+rasterstats
+folium
