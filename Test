@@ -1,87 +1,64 @@
 Client ID: 5fe79f43-3c2d-4cf6-9184-478e247504b7
 Client secret: uYQ6E6NvUDucLx0yRqz4zrUyeuWcX09U
 
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from typing import Optional
 import os
+import requests
+from typing import Dict
 
-from backend.utils.sentinelhub_api import fetch_bands_from_sentinelhub
-from backend.utils.preprocess import mlp_predict_from_ints, svr_predict_agb
-from backend.indices import compute_indices
+def get_access_token(client_id: str, client_secret: str) -> str:
+    """ขอ access token จาก Sentinel Hub OAuth"""
+    url = "https://services.sentinel-hub.com/oauth/token"
+    data = {
+        "grant_type":"client_credentials",
+        "client_id": client_id,
+        "client_secret": client_secret
+    }
+    r = requests.post(url, data=data)
+    r.raise_for_status()
+    return r.json()["access_token"]
 
-app = FastAPI(title="Sentinel -> MLP -> Indices -> AGB API")
+def fetch_bands_from_sentinelhub(lat: float, lng: float, instance_id: str) -> Dict[str,int]:
+    """
+    ดึง bands จาก Sentinel Hub WMS/WMTS
+    คืนค่า integer scaled-by-100
+    """
+    # อ่าน Client ID / Secret จาก env
+    client_id = os.getenv("SENTINELHUB_CLIENT_ID")
+    client_secret = os.getenv("SENTINELHUB_CLIENT_SECRET")
+    if not client_id or not client_secret:
+        raise ValueError("SENTINELHUB_CLIENT_ID / SECRET ต้องตั้งค่าใน env")
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+    token = get_access_token(client_id, client_secret)
 
-@app.get("/predict")
-async def predict(lat: float, lng: float, mode: Optional[str]="mock"):
-    instance_id = os.getenv("SENTINELHUB_INSTANCE_ID")
-    api_key = os.getenv("SENTINELHUB_API_KEY")
-    bands_int = fetch_bands_from_sentinelhub(lat,lng,instance_id,api_key)
+    # สร้าง WMS GetMap request
+    wms_url = f"https://services.sentinel-hub.com/ogc/wms/{instance_id}"
+    params = {
+        "SERVICE": "WMS",
+        "REQUEST": "GetMap",
+        "LAYERS": "TRUE_COLOR",   # หรือ custom layer
+        "MAXCC": 20,
+        "WIDTH": 1,
+        "HEIGHT": 1,
+        "CRS": "EPSG:4326",
+        "BBOX": f"{lng},{lat},{lng},{lat}",  # single pixel
+        "FORMAT": "image/tiff",
+        "TIME": "2023-01-01/2023-12-31"
+    }
+    headers = {"Authorization": f"Bearer {token}"}
 
-    if not bands_int:
-        raise HTTPException(status_code=500, detail="No bands from sentinelhub")
+    r = requests.get(wms_url, headers=headers, params=params)
+    r.raise_for_status()
 
-    bands_pred = mlp_predict_from_ints(bands_int)
-    indices = compute_indices(bands_pred)
-    agb = svr_predict_agb(indices)
-
-    return {
-        "coordinates":{"lat":round(lat,6),"lng":round(lng,6)},
-        "bands_predicted": bands_pred,
-        "indices": indices,
-        "agb":{"value": agb,"unit":"Mg/ha"},
-        "bands_input_int": bands_int
+    # อ่านค่า pixel จาก response (TIFF) 
+    # TODO: ต้องใช้ rasterio / PIL / numpy เพื่ออ่าน band values
+    # ตอนนี้ placeholder
+    # แปลงเป็น integer scaled-by-100
+    bands_int = {
+        "red": 43,
+        "green": 38,
+        "blue": 35,
+        "nir": 57,
+        "swir": 23
     }
 
-if __name__=="__main__":
-    import uvicorn
-    uvicorn.run("backend.main:app", host="0.0.0.0", port=8000, reload=True)
---
-
-<!doctype html>
-<html lang="th">
-<head>
-<meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>AGB Map</title>
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
-<link rel="stylesheet" href="style.css"/>
-</head>
-<body>
-<div id="map"></div>
-<aside id="panel">
-<h2>Clicked point</h2>
-<div id="info">คลิกบนแผนที่เพื่อดูค่า</div>
-</aside>
-
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="script.js"></script>
-</body>
-</html>
---
-html,body,#map { height:100%; margin:0; padding:0; }
-#map { width: calc(100% - 320px); float:left; }
-#panel {
-  width: 320px;
-  position: fixed;
-  right:0;
-  top:0;
-  bottom:0;
-  background:#f7f7f8;
-  padding:12px;
-  box-shadow:-2px 0 6px rgba(0,0,0,0.08);
-  overflow:auto;
-  font-family: system-ui, Arial, sans-serif;
-}
-#panel h2 { margin-top:0; }
-pre { white-space: pre-wrap; word-break: break-word; }
---
-const map = L.map
+    return bands_int
