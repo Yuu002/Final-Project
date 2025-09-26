@@ -1,79 +1,107 @@
+# ===== mlp_train.py =====
+import pandas as pd
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import train_test_split
+from sklearn.neural_network import MLPRegressor
 import joblib
+
+# Load dataset
+data = pd.read_csv("bands_extracted.csv")
+
+# Features (input bands)
+X = data[["Band1", "Band2", "Band3", "Band4"]].values
+
+# Target (example: output bands or indices)
+y = data[["Blue (B1)", "Green (B2)", "Red (B3)", "NIR (B4)"]].values
+
+# Scale features and outputs
+scaler_X = StandardScaler()
+X_scaled = scaler_X.fit_transform(X)
+
+scaler_y = StandardScaler()
+y_scaled = scaler_y.fit_transform(y)
+
+# Train/test split
+X_train, X_test, y_train, y_test = train_test_split(
+    X_scaled, y_scaled, test_size=0.2, random_state=42
+)
+
+# Train MLP
+mlp = MLPRegressor(hidden_layer_sizes=(64, 64, 32), 
+                   max_iter=500, random_state=42)
+mlp.fit(X_train, y_train)
+
+# Save model and scalers
+joblib.dump(mlp, "mlp_model.pkl")
+joblib.dump(scaler_X, "scaler_mlp_X.pkl")
+joblib.dump(scaler_y, "scaler_mlp_y.pkl")
+print("✅ Saved mlp_model.pkl, scaler_mlp_X.pkl, scaler_mlp_y.pkl")
+----
+# ===== svr_agb_train.py =====
+import pandas as pd
+from sklearn.preprocessing import StandardScaler
+from sklearn.svm import SVR
+from sklearn.metrics import mean_squared_error, r2_score
+from sklearn.model_selection import train_test_split
 import numpy as np
-import requests
-from app.utils.indices import calculate_indices
+import joblib
 
-# โหลดโมเดล
-mlp_model = joblib.load("app/models/mlp_model.pkl")
-scaler_X = joblib.load("app/models/scaler_mlp_X.pkl")
-scaler_y = joblib.load("app/models/scaler_mlp_y.pkl")
-svr_agb = joblib.load("app/models/svr_agb_model.pkl")
-scaler_agb_X = joblib.load("app/models/scaler_svr_X.pkl")
+# Load dataset
+data = pd.read_excel("AGB_Data.xlsx")
 
-SENTINEL_HUB_URL = "https://services.sentinel-hub.com/api/v1/process"  # ตัวอย่าง
-INSTANCE_ID = "fbc0987..."  # ใส่ของคุณ
+# Example: Features are 5 vegetation indices
+X = data[["NDVI", "TNDVI", "SR", "SAVI", "MSAVI2"]].values
+y = data["AGB"].values  # ต้องเป็น 1D array
 
-def get_raw_bands(lat, lon, date="2019-02-02"):
+# Scale features
+scaler_X = StandardScaler()
+X_scaled = scaler_X.fit_transform(X)
+
+# Train/test split
+X_train, X_test, y_train, y_test = train_test_split(
+    X_scaled, y, test_size=0.2, random_state=42
+)
+
+# Train SVR
+model = SVR(kernel="rbf", C=100, gamma=0.1, epsilon=0.1)
+model.fit(X_train, y_train)
+
+# Evaluate
+y_pred = model.predict(X_test)
+mse = mean_squared_error(y_test, y_pred)
+rmse = np.sqrt(mse)
+r2 = r2_score(y_test, y_pred)
+print(f"SVM (RBF) -> R²: {r2:.4f}, RMSE: {rmse:.4f}")
+
+# Save model + scaler
+joblib.dump(model, "svr_agb_model.pkl")
+joblib.dump(scaler_X, "scaler_svr_X.pkl")
+print("✅ Saved svr_agb_model.pkl, scaler_svr_X.pkl")
+---
+# indices.py
+import numpy as np
+
+def calculate_indices(red, nir, blue=None, green=None, L=0.5):
     """
-    ดึง raw DN ของ Red (B04) และ NIR (B08) จาก Sentinel Hub
+    คำนวณ NDVI, TNDVI, SR, SAVI, MSAVI2
+    red, nir, blue, green สามารถเป็น scalar หรือ numpy array
+    คืนค่าเป็น dict ของค่าเฉลี่ย (float)
     """
-    payload = {
-        "input": {
-            "bounds": {"geometry": {"type":"Point","coordinates":[lon, lat]}},
-            "data":[{"type":"S2L1C","dataFilter":{"timeRange":{"from":f"{date}T00:00:00Z","to":f"{date}T23:59:59Z"}}}]
-        },
-        "output":{"responses":[{"identifier":"default","format":{"type":"JSON"}}]}
-    }
-    headers = {"Authorization": f"Bearer {INSTANCE_ID}"}
+    red = np.array(red, dtype=float)
+    nir = np.array(nir, dtype=float)
 
-    r = requests.post(SENTINEL_HUB_URL, json=payload, headers=headers, timeout=30)
-    r.raise_for_status()
-    data = r.json()
+    L = 0.5
+    ndvi = (nir - red) / (nir + red)
+    # TNDVI: สูตรที่ใช้ในโปรเจค (ระวัง domain ของ sqrt)
+    tndvi = np.sqrt(np.clip(ndvi + 0.5, a_min=0.0, a_max=None))
+    sr = nir / red
+    savi = ((1 + L) * (nir - red)) / (nir + red + L)
+    msavi2 = (2 * nir + 1 - np.sqrt((2 * nir + 1) ** 2 - 8 * (nir - red))) / 2
 
-    # สมมติ data['BANDS'] เป็น dict {'B04': value, 'B08': value}
-    red = data['BANDS']['B04']
-    nir = data['BANDS']['B08']
-    return float(red), float(nir)
-    
-
-def run_pipeline(lat, lon, date="2019-02-02"):
-    red, nir = get_raw_bands(lat, lon, date)
-    
-    # ดึง output จาก MLP
-    X_input = np.array([[red, nir]])  # ถ้า MLP ต้อง 4 band ปรับเพิ่มค่า mock/0
-    X_scaled = scaler_X.transform(X_input)
-    y_scaled = mlp_model.predict(X_scaled)
-    y_pred = scaler_y.inverse_transform(y_scaled)
-    
-    # คำนวณ indices
-    indices = calculate_indices(red, nir)
-    
-    # คำนวณ AGB
-    X_agb = np.array([[indices["NDVI"], indices["TNDVI"], indices["SR"], indices["SAVI"], indices["MSAVI2"]]])
-    X_agb_scaled = scaler_agb_X.transform(X_agb)
-    agb_pred = svr_agb.predict(X_agb_scaled)[0]
-    
     return {
-        "red": red,
-        "nir": nir,
-        "indices": indices,
-        "agb": float(agb_pred)
+        "NDVI": float(np.nanmean(ndvi)),
+        "TNDVI": float(np.nanmean(tndvi)),
+        "SR": float(np.nanmean(sr)),
+        "SAVI": float(np.nanmean(savi)),
+        "MSAVI2": float(np.nanmean(msavi2)),
     }
-
---
-
-from fastapi import APIRouter
-from pydantic import BaseModel
-from app.services.ml_pipeline import run_pipeline
-
-router = APIRouter()
-
-class ProcessRequest(BaseModel):
-    lat: float
-    lon: float
-    date: str = "2019-02-02"
-
-@router.post("/process")
-def process_data(req: ProcessRequest):
-    result = run_pipeline(req.lat, req.lon, req.date)
-    return result
