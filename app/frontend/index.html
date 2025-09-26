@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>AGB Map Viewer</title>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+    <style>
+        #map { height: 100vh; width: 70%; float: left; }
+        #sidebar { height: 100vh; width: 30%; float: left; padding: 10px; box-sizing: border-box; overflow-y: auto; border-left: 1px solid #ccc; }
+        body { margin: 0; }
+        h3 { margin-top: 0; }
+        pre { background: #f0f0f0; padding: 5px; border-radius: 4px; }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    <div id="sidebar">
+        <h3>AGB Info</h3>
+        <p>คลิกที่จุดบนแผนที่เพื่อดึงข้อมูล Sentinel & Ground bands, Indices, AGB</p>
+        <div id="output"></div>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        const map = L.map('map').setView([18.288, 99.487], 12);
+
+        // MapTiler Hybrid Satellite
+        L.tileLayer('https://api.maptiler.com/maps/hybrid/{z}/{x}/{y}.png?key=SorpWvu9Cx7zkYKrxJbN', {
+            tileSize: 256,
+            zoomOffset: 0,
+            minZoom: 0,
+            maxZoom: 22,
+            attribution: '&copy; <a href="https://www.maptiler.com/copyright/">MapTiler</a> &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+        }).addTo(map);
+
+        function showInSidebar(data) {
+            const output = document.getElementById('output');
+            output.innerHTML = `
+                <h4>Sentinel Bands</h4>
+                <pre>${JSON.stringify(data.sentinel_bands, null, 2)}</pre>
+                <h4>Ground Bands</h4>
+                <pre>${JSON.stringify(data.ground_bands, null, 2)}</pre>
+                <h4>Indices</h4>
+                <pre>${JSON.stringify(data.indices, null, 2)}</pre>
+                <h4>AGB Prediction</h4>
+                <pre>${data.AGB_prediction.toFixed(2)}</pre>
+            `;
+        }
+
+        map.on('click', async function(e) {
+            const lat = e.latlng.lat;
+            const lon = e.latlng.lng;
+            console.log("Clicked:", lat, lon);
+
+            showInSidebar({sentinel_bands: ['Loading...'], ground_bands: {}, indices: {}, AGB_prediction: 0});
+
+            try {
+                const response = await fetch("http://127.0.0.1:8000/predict_from_coords", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ lat: lat, lon: lon })
+                });
+
+                if (!response.ok) {
+                    const text = await response.text();
+                    console.error("Backend error:", text);
+                    showInSidebar({sentinel_bands: ['Error'], ground_bands: {}, indices: {}, AGB_prediction: 0});
+                    return;
+                }
+
+                const data = await response.json();
+                console.log("Response:", data);
+                showInSidebar(data);
+            } catch (err) {
+                console.error("Fetch error:", err);
+                showInSidebar({sentinel_bands: ['Error'], ground_bands: {}, indices: {}, AGB_prediction: 0});
+            }
+        });
+    </script>
+</body>
+</html>
