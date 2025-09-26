@@ -1,127 +1,79 @@
-from fastapi import FastAPI
-from pydantic import BaseModel
-import joblib
-import os
-import numpy as np
-from indices import calculate_indices
-from sentinelhub import SHConfig, BBox, CRS, SentinelHubRequest, MimeType, DataCollection
+<!DOCTYPE html>
+<html>
+<head>
+    <title>AGB Map Viewer</title>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-app = FastAPI()
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 
-# ===== path dynamic =====
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    <style>
+        #map { height: 100vh; width: 70%; float: left; }
+        #sidebar { height: 100vh; width: 30%; float: left; padding: 10px; box-sizing: border-box; overflow-y: auto; border-left: 1px solid #ccc; }
+        body { margin: 0; }
+        h3 { margin-top: 0; }
+        pre { background: #f0f0f0; padding: 5px; border-radius: 4px; }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    <div id="sidebar">
+        <h3>AGB Info</h3>
+        <p>คลิกที่จุดบนแผนที่เพื่อดึงข้อมูล Sentinel & Ground bands, Indices, AGB</p>
+        <div id="output"></div>
+    </div>
 
-MLP_MODEL_PATH = os.path.join(BASE_DIR, "mlp_model.pkl")
-SCALER_MLP_X_PATH = os.path.join(BASE_DIR, "scaler_mlp_X.pkl")
-SCALER_MLP_Y_PATH = os.path.join(BASE_DIR, "scaler_mlp_y.pkl")
-SVR_AGB_MODEL_PATH = os.path.join(BASE_DIR, "svr_agb_model.pkl")
-SCALER_SVR_X_PATH = os.path.join(BASE_DIR, "scaler_svr_X.pkl")
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
-# ===== load models =====
-mlp_model = joblib.load(MLP_MODEL_PATH)
-scaler_mlp_X = joblib.load(SCALER_MLP_X_PATH)
-scaler_mlp_y = joblib.load(SCALER_MLP_Y_PATH)
-svr_agb_model = joblib.load(SVR_AGB_MODEL_PATH)
-scaler_svr_X = joblib.load(SCALER_SVR_X_PATH)
+    <script>
+        // 1. สร้าง map
+        const map = L.map('map').setView([18.288, 99.487], 12);
 
-print("BASE_DIR =", BASE_DIR)
-print("Files in BASE_DIR:", os.listdir(BASE_DIR))
+        // 2. เพิ่ม tile layer satellite
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19,
+            attribution: '&copy; OpenStreetMap contributors'
+        }).addTo(map);
 
-# ===== Schema =====
-class SentinelInput(BaseModel):
-    bands: list[float]  # [Band1, Band2, Band3, Band4]
+        // 3. ฟังก์ชันแสดงผลใน sidebar
+        function showInSidebar(data) {
+            const output = document.getElementById('output');
+            output.innerHTML = `
+                <h4>Sentinel Bands</h4>
+                <pre>${JSON.stringify(data.sentinel_bands, null, 2)}</pre>
+                <h4>Ground Bands</h4>
+                <pre>${JSON.stringify(data.ground_bands, null, 2)}</pre>
+                <h4>Indices</h4>
+                <pre>${JSON.stringify(data.indices, null, 2)}</pre>
+                <h4>AGB Prediction</h4>
+                <pre>${data.AGB_prediction.toFixed(2)}</pre>
+            `;
+        }
 
-class CoordInput(BaseModel):
-    lat: float
-    lon: float
+        // 4. click event → fetch backend
+        map.on('click', async function(e) {
+            const lat = e.latlng.lat;
+            const lon = e.latlng.lng;
 
-# ===== ฟังก์ชัน scale bands 40-78 =====
-def scale_bands_to_range(bands, min_val=40, max_val=78):
-    bands = np.array(bands, dtype=float)
-    if bands.max() - bands.min() == 0:
-        return np.full_like(bands, (min_val+max_val)//2, dtype=int)
-    bands_norm = (bands - bands.min()) / (bands.max() - bands.min())
-    bands_scaled = bands_norm * (max_val - min_val) + min_val
-    return np.round(bands_scaled).astype(int)
+            // แสดง loading
+            showInSidebar({sentinel_bands: ['Loading...'], ground_bands: {}, indices: {}, AGB_prediction: 0});
 
-# ===== ดึง Sentinel bands จาก lat/lon =====
-def get_sentinel_bands(lat, lon):
-    config = SHConfig()
-    config.sh_client_id = "YOUR_CLIENT_ID"
-    config.sh_client_secret = "YOUR_CLIENT_SECRET"
+            try {
+                const response = await fetch("http://127.0.0.1:8000/predict_from_coords", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ lat: lat, lon: lon })
+                });
 
-    bbox = BBox(bbox=[lon, lat, lon, lat], crs=CRS.WGS84)
-    
-    request = SentinelHubRequest(
-        evalscript="""
-            //VERSION=3
-            function setup() {
-                return { input: ["B02","B03","B04","B08"], output: { bands: 4 } };
+                const data = await response.json();
+                showInSidebar(data);
+            } catch (err) {
+                console.error(err);
+                showInSidebar({sentinel_bands: ['Error'], ground_bands: {}, indices: {}, AGB_prediction: 0});
             }
-            function evaluatePixel(sample) {
-                return [sample.B02*100, sample.B03*100, sample.B04*100, sample.B08*100];
-            }
-        """,
-        input_data=[SentinelHubRequest.input_data(DataCollection.SENTINEL2_L2A)],
-        responses=[SentinelHubRequest.output_response('default', MimeType.TIFF)],
-        bbox=bbox,
-        size=(1,1),
-        config=config
-    )
-    
-    data = request.get_data()[0][0][0]  # shape (1,1,4)
-    return np.round(data).astype(int).tolist()
-
-# ===== Endpoint: ส่ง Sentinel bands ตรง ๆ =====
-@app.post("/predict_all")
-def predict_all(data: SentinelInput):
-    sentinel_bands_int = scale_bands_to_range(data.bands, 40, 78)
-    
-    X_scaled = scaler_mlp_X.transform([sentinel_bands_int])
-    ground_bands_scaled = mlp_model.predict(X_scaled)
-    ground_bands = scaler_mlp_y.inverse_transform(ground_bands_scaled)[0]
-    ground_bands_int = scale_bands_to_range(ground_bands, 40, 78)
-    blue, green, red, nir = ground_bands_int
-    
-    indices = calculate_indices(red=red, nir=nir, blue=blue, green=green)
-    indices_array = np.array([[indices["NDVI"], indices["TNDVI"], indices["SR"],
-                               indices["SAVI"], indices["MSAVI2"]]])
-    indices_scaled = scaler_svr_X.transform(indices_array)
-    agb_pred = svr_agb_model.predict(indices_scaled)[0]
-    
-    return {
-        "sentinel_bands": sentinel_bands_int.tolist(),
-        "ground_bands": {"Blue": int(blue), "Green": int(green), "Red": int(red), "NIR": int(nir)},
-        "indices": indices,
-        "AGB_prediction": float(agb_pred)
-    }
-
-# ===== Endpoint: ส่ง lat/lon → ดึง Sentinel bands =====
-@app.post("/predict_from_coords")
-def predict_from_coords(data: CoordInput):
-    sentinel_bands = get_sentinel_bands(data.lat, data.lon)
-    sentinel_bands_int = scale_bands_to_range(sentinel_bands, 40, 78)
-    
-    X_scaled = scaler_mlp_X.transform([sentinel_bands_int])
-    ground_bands_scaled = mlp_model.predict(X_scaled)
-    ground_bands = scaler_mlp_y.inverse_transform(ground_bands_scaled)[0]
-    ground_bands_int = scale_bands_to_range(ground_bands, 40, 78)
-    blue, green, red, nir = ground_bands_int
-    
-    indices = calculate_indices(red=red, nir=nir, blue=blue, green=green)
-    indices_array = np.array([[indices["NDVI"], indices["TNDVI"], indices["SR"],
-                               indices["SAVI"], indices["MSAVI2"]]])
-    indices_scaled = scaler_svr_X.transform(indices_array)
-    agb_pred = svr_agb_model.predict(indices_scaled)[0]
-    
-    return {
-        "sentinel_bands": sentinel_bands_int,
-        "ground_bands": {"Blue": int(blue), "Green": int(green), "Red": int(red), "NIR": int(nir)},
-        "indices": indices,
-        "AGB_prediction": float(agb_pred)
-    }
-
-# ===== run uvicorn =====
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=False)
+        });
+    </script>
+</body>
+</html>
