@@ -108,15 +108,4 @@ plot_bands(image, title="Sentinel-2 RGB (with NIR included)")
 save_geotiff("output/sentinel_image.tif", image, request.get_transform(), request.get_crs())
 print("✅ Saved: output/sentinel_image.tif")
 --
-import requests
-
-url = "https://services.sentinel-hub.com/oauth/token"
-data = {
-    "client_id": "YOUR_CLIENT_ID",
-    "client_secret": "YOUR_CLIENT_SECRET",
-    "grant_type": "client_credentials"
-}
-
-response = requests.post(url, data=data)
-token = response.json()["access_token"]
-print("Access token:", token)
+oauthlib.oauth2.rfc6749.errors.UnauthorizedClientError: (unauthorized_client) Invalid client or Invalid client credentials
