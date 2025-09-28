@@ -1,1 +1,108 @@
-http://127.0.0.1:5500/frontend/index.html
+# config.py
+
+# Sentinel Hub Configuration
+INSTANCE_ID = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxx"
+CLIENT_ID = "your_client_id"
+CLIENT_SECRET = "your_client_secret"
+--
+
+# utils.py
+import matplotlib.pyplot as plt
+import numpy as np
+import rasterio
+
+def plot_bands(image_array, title="Sentinel Image"):
+    """แสดงภาพ RGB จาก array"""
+    rgb = np.stack([
+        image_array[:, :, 2],  # R
+        image_array[:, :, 1],  # G
+        image_array[:, :, 0]   # B
+    ], axis=-1)
+    rgb = np.clip(rgb / np.percentile(rgb, 98), 0, 1)  # Normalize
+    plt.imshow(rgb)
+    plt.title(title)
+    plt.axis("off")
+    plt.show()
+
+def save_geotiff(filename, data, transform, crs):
+    """บันทึก GeoTIFF"""
+    with rasterio.open(
+        filename, "w",
+        driver="GTiff",
+        height=data.shape[0],
+        width=data.shape[1],
+        count=data.shape[2],
+        dtype=data.dtype,
+        crs=crs,
+        transform=transform
+    ) as dst:
+        for i in range(data.shape[2]):
+            dst.write(data[:, :, i], i + 1)
+--
+
+# fetch_data.py
+from sentinelhub import (
+    SHConfig, BBox, CRS, MimeType,
+    SentinelHubRequest, DataCollection, bbox_to_dimensions
+)
+import numpy as np
+from datetime import date
+from config import INSTANCE_ID, CLIENT_ID, CLIENT_SECRET
+from utils import plot_bands, save_geotiff
+
+# ตั้งค่า API
+config = SHConfig()
+config.instance_id = INSTANCE_ID
+config.sh_client_id = CLIENT_ID
+config.sh_client_secret = CLIENT_SECRET
+
+# 🔹 เลือกพื้นที่ (ตัวอย่าง ลำปาง)
+bbox = BBox(bbox=[100.3, 18.1, 100.5, 18.3], crs=CRS.WGS84)
+resolution = 10  # เมตร
+size = bbox_to_dimensions(bbox, resolution=resolution)
+
+# 🔹 เลือกช่วงเวลา
+time_interval = ("2020-06-01", "2020-06-30")
+
+# 🔹 Evalscript: เอา B02 (Blue), B03 (Green), B04 (Red), B08 (NIR)
+evalscript = """
+//VERSION=3
+function setup() {
+  return {
+    input: ["B02", "B03", "B04", "B08"],
+    output: { bands: 4 }
+  };
+}
+function evaluatePixel(sample) {
+  return [sample.B02, sample.B03, sample.B04, sample.B08];
+}
+"""
+
+# 🔹 Request ข้อมูล
+request = SentinelHubRequest(
+    data_folder="output",
+    evalscript=evalscript,
+    input_data=[
+        SentinelHubRequest.input_data(
+            data_collection=DataCollection.SENTINEL2_L1C,
+            time_interval=time_interval,
+        )
+    ],
+    responses=[
+        SentinelHubRequest.output_response("default", MimeType.TIFF)
+    ],
+    bbox=bbox,
+    size=size,
+    config=config
+)
+
+# 🔹 ดึงข้อมูล
+image = request.get_data()[0]  # numpy array
+print("Shape:", image.shape)
+
+# 🔹 แสดงผล
+plot_bands(image, title="Sentinel-2 RGB (with NIR included)")
+
+# 🔹 บันทึก GeoTIFF
+save_geotiff("output/sentinel_image.tif", image, request.get_transform(), request.get_crs())
+print("✅ Saved: output/sentinel_image.tif")
