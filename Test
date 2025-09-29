@@ -118,8 +118,6 @@ except Exception as e:
     print("❌ Authentication failed:", e)
 
 
-Google Earth Engine authorization successful!
+ee.Initialize: no project found. Call with project= or see http://goo.gle/ee-auth.
 
-
-Credentials have been retrieved.  Please close this window.
 
