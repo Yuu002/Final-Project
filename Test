@@ -21,17 +21,22 @@ def index():
 @app.route('/get_image', methods=['POST'])
 def get_image():
     date_str = request.json.get('date')
-    date = datetime.strptime(date_str, '%Y-%m-%d')
+    if date_str:
+        date = datetime.strptime(date_str, '%Y-%m-%d')
+    else:
+        # ถ้าไม่ส่งวัน ให้ใช้วันล่าสุดใน collection
+        date = datetime.today()
+
     start = date - timedelta(days=2)
     end = date + timedelta(days=2)
-    
+
     collection = (ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
                   .filterDate(start.strftime('%Y-%m-%d'), end.strftime('%Y-%m-%d'))
                   .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 30))
                   .map(maskS2clouds))
     
-    image = collection.first()
-    
+    image = collection.sort('system:time_start', False).first()  # เลือกล่าสุด
+
     if image is None:
         return jsonify({'error': 'No image found for this date.'})
     
@@ -46,6 +51,7 @@ def get_image():
 if __name__ == '__main__':
     app.run(debug=True)
 --
+
 <!DOCTYPE html>
 <html>
 <head>
@@ -73,9 +79,11 @@ var map = new ol.Map({
 
 var s2Layer = null;
 
+// โหลดภาพล่าสุดตอนเปิดเว็บ
+window.onload = function() { loadImage(); }
+
 function loadImage(){
-    var date = document.getElementById('datePicker').value;
-    if(!date){ alert("Please select a date."); return; }
+    var date = document.getElementById('datePicker').value || null;
 
     fetch('/get_image', {
         method: 'POST',
