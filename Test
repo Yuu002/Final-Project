@@ -1,4 +1,8 @@
-Enable required APIs
-To complete registration please enable the Earth Engine API.
-Google Earth Engine API 
- Not enabled
+import ee
+
+# Initialize Earth Engine with your project
+ee.Initialize(project='map-web')
+
+# Test: Load a Sentinel-2 image collection
+collection = ee.ImageCollection("COPERNICUS/S2_SR").first()
+print(collection.getInfo())  # ตรวจสอบว่าดึงข้อมูลได้
