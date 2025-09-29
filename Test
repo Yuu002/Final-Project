@@ -1,58 +1,57 @@
+import ee
+
+# Initialize GEE
+ee.Initialize(project='map-web')
+
+# ดึง Sentinel-2 Harmonized ตัวแรก (ภาพล่าสุด)
+collection = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED') \
+                .sort('system:time_start', False)  # เรียงล่าสุดก่อน
+image = collection.first()
+
+# สร้าง tile URL สำหรับ OpenLayers
+map_id_dict = image.getMapId({
+    'bands': ['B4','B3','B2'],  # RGB
+    'min': 0.0,
+    'max': 0.3
+})
+
+tile_url = map_id_dict['tile_fetcher'].url_format
+print(tile_url)
+--
 <!DOCTYPE html>
 <html>
 <head>
-  <title>OpenLayers Basic Map</title>
-  <!-- ใส่ OpenLayers CSS -->
+  <title>OpenLayers + GEE</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ol@v7.4.0/ol.css">
+  <script src="https://cdn.jsdelivr.net/npm/ol@v7.4.0/dist/ol.js"></script>
   <style>
-    #map {
-      width: 100%;
-      height: 600px;
-    }
-    #datepicker {
-      position: absolute;
-      top: 10px;
-      left: 10px;
-      z-index: 1000;
-      background: white;
-      padding: 5px;
-      border-radius: 4px;
-    }
+    #map { width: 100%; height: 100vh; }
   </style>
 </head>
 <body>
-
-  <!-- Date picker -->
-  <input type="date" id="datepicker">
-
-  <!-- Map container -->
   <div id="map"></div>
-
-  <!-- ใส่ OpenLayers JS -->
-  <script src="https://cdn.jsdelivr.net/npm/ol@v7.4.0/dist/ol.js"></script>
   <script>
-    // สร้าง map พื้นฐาน
+    var geeTileUrl = 'TILE_URL_FROM_BACKEND'; // ใส่ tile_url จาก Python
+
+    var geeLayer = new ol.layer.Tile({
+      source: new ol.source.XYZ({
+        url: geeTileUrl
+      })
+    });
+
     var map = new ol.Map({
       target: 'map',
       layers: [
         new ol.layer.Tile({
-          source: new ol.source.OSM() // ใช้ OpenStreetMap เป็นพื้นหลัง
-        })
+          source: new ol.source.OSM()  // พื้นหลัง OSM
+        }),
+        geeLayer
       ],
       view: new ol.View({
-        center: ol.proj.fromLonLat([0, 0]), // กำหนดจุดกลางโลก
+        center: ol.proj.fromLonLat([0,0]),
         zoom: 2
       })
     });
-
-    // ตัวอย่างการดึงค่าจาก date picker
-    var dateInput = document.getElementById('datepicker');
-    dateInput.addEventListener('change', function() {
-      var selectedDate = dateInput.value;
-      console.log("User selected date:", selectedDate);
-      // ที่ตรงนี้สามารถเรียก backend เพื่อเอา tile หรือข้อมูล GEE
-    });
   </script>
-
 </body>
 </html>
