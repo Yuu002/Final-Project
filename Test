@@ -1,1 +1,7 @@
-https://code.earthengine.google.com/1e25fc345c814f475111e44c78662207
+Principals with access (optional)
+Grant access to users or groups that need to perform actions as this service account. Learn more 
+
+Service account users role
+Grant users the permissions to deploy jobs and VMs with this service account
+Service account admins role
+Grant users the permission to administer this service account
