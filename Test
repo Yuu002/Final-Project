@@ -1,1 +1,8 @@
-https://console.developers.google.com/iam-admin/iam/project?project=map-web
+import ee
+
+# Initialize Earth Engine กับ Project map-web
+ee.Initialize(project='map-web')
+
+# ทดสอบดึง Sentinel-2 image ตัวแรก
+collection = ee.ImageCollection("COPERNICUS/S2_SR").first()
+print(collection.getInfo())
