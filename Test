@@ -1,8 +1,1 @@
-import ee
-
-# Initialize Earth Engine with your project
-ee.Initialize(project='map-web')
-
-# Test: Load a Sentinel-2 image collection
-collection = ee.ImageCollection("COPERNICUS/S2_SR").first()
-print(collection.getInfo())  # ตรวจสอบว่าดึงข้อมูลได้
+ee.ee_exception.EEException: Caller does not have required permission to use project map-web. Grant the caller the roles/serviceusage.serviceUsageConsumer role, or a custom role with the serviceusage.services.use permission, by visiting https://console.developers.google.com/iam-admin/iam/project?project=map-web and then retry. Propagation of the new permission may take a few minutes.
