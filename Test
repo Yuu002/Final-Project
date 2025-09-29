@@ -116,3 +116,10 @@ try:
     print("✅ Authenticated successfully!")
 except Exception as e:
     print("❌ Authentication failed:", e)
+
+
+Google Earth Engine authorization successful!
+
+
+Credentials have been retrieved.  Please close this window.
+
