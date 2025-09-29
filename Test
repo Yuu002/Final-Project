@@ -1,33 +1,4 @@
-Review summary
-Create and edit the daily limit for usage (EECU-time) through the Earth Engine Configuration page.
-Organization type
-Which of the following best describes you or your organization?
-Public or private academic institution (including faculty, staff, students)
-
-Noncommercial eligibility
-What is the name of your academic institution?
-University of Phayao
-
-Will you receive any payment (including fee-for-service) from commercial entities, operational entities, or government organizations for applications or data created using Earth Engine? Note: This does not include research-only grants.
-No
-
-How would you describe your use of Earth Engine?
-Scientific research
-
-What is your research question?
-How can global satellite imagery be used to monitor vegetation characteristics and estimate above-ground biomass (AGB) over time? Specifically, how can users select any location or pixel on a global map, adjust the date, and retrieve reflectance, vegetation indices, and estimated AGB values?
-
-What is the geographic scope of your study?
-Global
-
-Have you previously published work on this topic that used Earth Engine?
-No
-
-Your work
-Does your work with Earth Engine fall into any of these categories?
-Mitigation, Protection & conservation
-
-Will you use Earth Engine for any of the following?
-Artificial intelligence and machine learning (AI / ML), Forestry, Scientific Research & Development
-
-This information is collected to verify noncommercial eligibility, inform product improvements, and assess the sustainability impact of Earth Engine usage, subject to the Google Cloud Privacy Notice .
+Enable required APIs
+To complete registration please enable the Earth Engine API.
+Google Earth Engine API 
+ Not enabled
