@@ -1,9 +1,1 @@
-import ee
-
-# ใส่อีเมลของ Service Account ที่สร้างไว้
-SERVICE_ACCOUNT = 'your-service-account@your-project.iam.gserviceaccount.com'
-KEY_FILE = '/path/to/your/service-account.json'
-
-# Authenticate ด้วย Service Account
-credentials = ee.ServiceAccountCredentials(SERVICE_ACCOUNT, KEY_FILE)
-ee.Initialize(credentials)
+SyntaxError: (unicode error) 'unicodeescape' codec can't decode bytes in position 2-3: truncated \UXXXXXXXX escape
