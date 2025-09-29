@@ -1,38 +1,101 @@
-Harmonized Sentinel-2 MSI: MultiSpectral Instrument, Level-2A (SR)
+from flask import Flask, render_template, request, jsonify
+import ee
+from datetime import datetime, timedelta
 
+ee.Initialize(project='map-web')  # ใส่ชื่อ project ของคุณ
 
-/**
- * Function to mask clouds using the Sentinel-2 QA band
- * @param {ee.Image} image Sentinel-2 image
- * @return {ee.Image} cloud masked Sentinel-2 image
- */
-function maskS2clouds(image) {
-  var qa = image.select('QA60');
+app = Flask(__name__)
 
-  // Bits 10 and 11 are clouds and cirrus, respectively.
-  var cloudBitMask = 1 << 10;
-  var cirrusBitMask = 1 << 11;
+def maskS2clouds(image):
+    qa = image.select('QA60')
+    cloudBitMask = 1 << 10
+    cirrusBitMask = 1 << 11
+    mask = qa.bitwiseAnd(cloudBitMask).eq(0).And(
+           qa.bitwiseAnd(cirrusBitMask).eq(0))
+    return image.updateMask(mask).divide(10000)
 
-  // Both flags should be set to zero, indicating clear conditions.
-  var mask = qa.bitwiseAnd(cloudBitMask).eq(0)
-      .and(qa.bitwiseAnd(cirrusBitMask).eq(0));
+@app.route('/')
+def index():
+    return render_template('index.html')
 
-  return image.updateMask(mask).divide(10000);
+@app.route('/get_image', methods=['POST'])
+def get_image():
+    date_str = request.json.get('date')
+    date = datetime.strptime(date_str, '%Y-%m-%d')
+    start = date - timedelta(days=2)
+    end = date + timedelta(days=2)
+    
+    collection = (ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
+                  .filterDate(start.strftime('%Y-%m-%d'), end.strftime('%Y-%m-%d'))
+                  .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 30))
+                  .map(maskS2clouds))
+    
+    image = collection.first()
+    
+    if image is None:
+        return jsonify({'error': 'No image found for this date.'})
+    
+    map_id_dict = ee.Image(image).getMapId({
+        'bands': ['B4','B3','B2'],
+        'min':0.0,
+        'max':0.3
+    })
+    
+    return jsonify(map_id_dict)
+
+if __name__ == '__main__':
+    app.run(debug=True)
+--
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Satellite Map</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ol/ol.css">
+  <script src="https://cdn.jsdelivr.net/npm/ol/ol.js"></script>
+</head>
+<body>
+  <h3>Select Date:</h3>
+  <input type="date" id="datePicker">
+  <button onclick="loadImage()">Load Image</button>
+  <div id="map" style="width: 100%; height: 600px;"></div>
+
+<script>
+var map = new ol.Map({
+    target: 'map',
+    layers: [
+        new ol.layer.Tile({ source: new ol.source.OSM() })
+    ],
+    view: new ol.View({
+        center: ol.proj.fromLonLat([0,0]),
+        zoom: 2
+    })
+});
+
+var s2Layer = null;
+
+function loadImage(){
+    var date = document.getElementById('datePicker').value;
+    if(!date){ alert("Please select a date."); return; }
+
+    fetch('/get_image', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({'date': date})
+    }).then(res => res.json())
+      .then(data => {
+          if(data.error){ alert(data.error); return; }
+
+          if(s2Layer) map.removeLayer(s2Layer);
+
+          s2Layer = new ol.layer.Tile({
+              source: new ol.source.XYZ({
+                  url: data['tile_fetcher']['url_format']
+              })
+          });
+
+          map.addLayer(s2Layer);
+      });
 }
-
-var dataset = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
-                  .filterDate('2020-01-01', '2020-01-30')
-                  // Pre-filter to get less cloudy granules.
-                  .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE',20))
-                  .map(maskS2clouds);
-
-var visualization = {
-  min: 0.0,
-  max: 0.3,
-  bands: ['B4', 'B3', 'B2'],
-};
-
-Map.setCenter(83.277, 17.7009, 12);
-
-Map.addLayer(dataset.mean(), visualization, 'RGB');
-
+</script>
+</body>
+</html>
