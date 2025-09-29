@@ -1,46 +1,118 @@
-Client ID: 5fe79f43-3c2d-4cf6-9184-478e247504b7
-Client secret: uYQ6E6NvUDucLx0yRqz4zrUyeuWcX09U
+pip install earthengine-api
+pip install flask
 
-# check_credentials.py
-from sentinelhub import SHConfig, BBox, CRS, SentinelHubRequest, DataCollection
+earthengine authenticate
+--
+from flask import Flask, request, jsonify
+import ee
 
-# 🔹 ใส่ค่า Client ID, Client Secret, Instance ID ของคุณ
-CLIENT_ID = "5fe79f43-3c2d-4cf6-9184-478e247504b7"
-CLIENT_SECRET = "uYQ6E6NvUDucLx0yRqz4zrUyeuWcX09U"
-INSTANCE_ID = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxx"  # เปลี่ยนเป็นของจริง
+# Initialize Earth Engine
+ee.Initialize()
 
-# 🔹 ตั้งค่า SHConfig
-config = SHConfig()
-config.sh_client_id = CLIENT_ID
-config.sh_client_secret = CLIENT_SECRET
-config.instance_id = INSTANCE_ID
+app = Flask(__name__)
 
-print("🔹 ตรวจสอบ Sentinel Hub credentials & instance")
-print("Client ID:", config.sh_client_id)
-print("Instance ID:", config.instance_id)
+@app.route("/get_map", methods=["GET"])
+def get_map():
+    date = request.args.get("date")  # รับวันที่จาก frontend เช่น "2024-01-15"
+    if not date:
+        return jsonify({"error": "Please provide a date"}), 400
 
-# 🔹 ทดสอบเรียก request เล็ก ๆ
-bbox = BBox([100.3, 18.1, 100.31, 18.11], crs=CRS.WGS84)
+    # เลือก Sentinel-2
+    collection = (
+        ee.ImageCollection("COPERNICUS/S2_SR")
+        .filterDate(date, date)  # filter ตามวัน
+        .filterBounds(ee.Geometry.Point([100.5, 13.7]))  # ตัวอย่าง: กทม.
+        .sort("CLOUDY_PIXEL_PERCENTAGE")  # เอาภาพที่เมฆน้อยสุด
+    )
+
+    image = collection.first()
+    if not image:
+        return jsonify({"error": "No image found for this date"}), 404
+
+    # Visualization parameter
+    vis_params = {
+        "bands": ["B4", "B3", "B2"],  # RGB
+        "min": 0,
+        "max": 3000
+    }
+
+    # สร้าง Tile URL
+    map_id = image.getMapId(vis_params)
+    tile_url = map_id["tile_fetcher"].url_format
+
+    return jsonify({"tile_url": tile_url})
+
+if __name__ == "__main__":
+    app.run(debug=True)
+--
+
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Sentinel-2 Map</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ol/ol.css">
+  <script src="https://cdn.jsdelivr.net/npm/ol/ol.js"></script>
+</head>
+<body>
+  <h3>เลือกวันที่:</h3>
+  <input type="date" id="datePicker">
+  <button onclick="updateMap()">Load Map</button>
+
+  <div id="map" style="width:100%; height:600px;"></div>
+
+  <script>
+    let map;
+    let layer;
+
+    function initMap() {
+      map = new ol.Map({
+        target: "map",
+        layers: [
+          new ol.layer.Tile({
+            source: new ol.source.OSM()
+          })
+        ],
+        view: new ol.View({
+          center: ol.proj.fromLonLat([100.5, 13.7]), // กทม.
+          zoom: 8
+        })
+      });
+    }
+
+    async function updateMap() {
+      const date = document.getElementById("datePicker").value;
+      if (!date) {
+        alert("กรุณาเลือกวัน");
+        return;
+      }
+
+      const response = await fetch(`/get_map?date=${date}`);
+      const data = await response.json();
+
+      if (data.tile_url) {
+        if (layer) {
+          map.removeLayer(layer);
+        }
+        layer = new ol.layer.Tile({
+          source: new ol.source.XYZ({
+            url: data.tile_url
+          })
+        });
+        map.addLayer(layer);
+      } else {
+        alert("ไม่พบภาพสำหรับวันนั้น");
+      }
+    }
+
+    initMap();
+  </script>
+</body>
+</html>
+--
+import ee
 
 try:
-    request = SentinelHubRequest(
-        data_folder=None,
-        evalscript="""
-        //VERSION=3
-        function setup(){ return {input:["B04"], output:{bands:1}};}
-        function evaluatePixel(sample){ return [sample.B04]; }
-        """,
-        input_data=[SentinelHubRequest.input_data(
-            data_collection=DataCollection.SENTINEL2_L1C,
-            time_interval=("2020-06-01", "2020-06-02")
-        )],
-        responses=[SentinelHubRequest.output_response("default")],
-        bbox=bbox,
-        size=(2,2),
-        config=config
-    )
-    data = request.get_data()
-    print("✅ Credentials ถูกต้อง สามารถเรียก API ได้")
+    ee.Initialize()
+    print("✅ Authenticated successfully!")
 except Exception as e:
-    print("❌ ตรวจสอบ credential/instance ผิดพลาด:")
-    print(e)
+    print("❌ Authentication failed:", e)
