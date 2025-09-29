@@ -1,109 +1,58 @@
-from flask import Flask, render_template, request, jsonify
-import ee
-from datetime import datetime, timedelta
-
-ee.Initialize(project='map-web')  # ใส่ชื่อ project ของคุณ
-
-app = Flask(__name__)
-
-def maskS2clouds(image):
-    qa = image.select('QA60')
-    cloudBitMask = 1 << 10
-    cirrusBitMask = 1 << 11
-    mask = qa.bitwiseAnd(cloudBitMask).eq(0).And(
-           qa.bitwiseAnd(cirrusBitMask).eq(0))
-    return image.updateMask(mask).divide(10000)
-
-@app.route('/')
-def index():
-    return render_template('index.html')
-
-@app.route('/get_image', methods=['POST'])
-def get_image():
-    date_str = request.json.get('date')
-    if date_str:
-        date = datetime.strptime(date_str, '%Y-%m-%d')
-    else:
-        # ถ้าไม่ส่งวัน ให้ใช้วันล่าสุดใน collection
-        date = datetime.today()
-
-    start = date - timedelta(days=2)
-    end = date + timedelta(days=2)
-
-    collection = (ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
-                  .filterDate(start.strftime('%Y-%m-%d'), end.strftime('%Y-%m-%d'))
-                  .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 30))
-                  .map(maskS2clouds))
-    
-    image = collection.sort('system:time_start', False).first()  # เลือกล่าสุด
-
-    if image is None:
-        return jsonify({'error': 'No image found for this date.'})
-    
-    map_id_dict = ee.Image(image).getMapId({
-        'bands': ['B4','B3','B2'],
-        'min':0.0,
-        'max':0.3
-    })
-    
-    return jsonify(map_id_dict)
-
-if __name__ == '__main__':
-    app.run(debug=True)
---
-
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Satellite Map</title>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ol/ol.css">
-  <script src="https://cdn.jsdelivr.net/npm/ol/ol.js"></script>
+  <title>OpenLayers Basic Map</title>
+  <!-- ใส่ OpenLayers CSS -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ol@v7.4.0/ol.css">
+  <style>
+    #map {
+      width: 100%;
+      height: 600px;
+    }
+    #datepicker {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      z-index: 1000;
+      background: white;
+      padding: 5px;
+      border-radius: 4px;
+    }
+  </style>
 </head>
 <body>
-  <h3>Select Date:</h3>
-  <input type="date" id="datePicker">
-  <button onclick="loadImage()">Load Image</button>
-  <div id="map" style="width: 100%; height: 600px;"></div>
 
-<script>
-var map = new ol.Map({
-    target: 'map',
-    layers: [
-        new ol.layer.Tile({ source: new ol.source.OSM() })
-    ],
-    view: new ol.View({
-        center: ol.proj.fromLonLat([0,0]),
+  <!-- Date picker -->
+  <input type="date" id="datepicker">
+
+  <!-- Map container -->
+  <div id="map"></div>
+
+  <!-- ใส่ OpenLayers JS -->
+  <script src="https://cdn.jsdelivr.net/npm/ol@v7.4.0/dist/ol.js"></script>
+  <script>
+    // สร้าง map พื้นฐาน
+    var map = new ol.Map({
+      target: 'map',
+      layers: [
+        new ol.layer.Tile({
+          source: new ol.source.OSM() // ใช้ OpenStreetMap เป็นพื้นหลัง
+        })
+      ],
+      view: new ol.View({
+        center: ol.proj.fromLonLat([0, 0]), // กำหนดจุดกลางโลก
         zoom: 2
-    })
-});
+      })
+    });
 
-var s2Layer = null;
+    // ตัวอย่างการดึงค่าจาก date picker
+    var dateInput = document.getElementById('datepicker');
+    dateInput.addEventListener('change', function() {
+      var selectedDate = dateInput.value;
+      console.log("User selected date:", selectedDate);
+      // ที่ตรงนี้สามารถเรียก backend เพื่อเอา tile หรือข้อมูล GEE
+    });
+  </script>
 
-// โหลดภาพล่าสุดตอนเปิดเว็บ
-window.onload = function() { loadImage(); }
-
-function loadImage(){
-    var date = document.getElementById('datePicker').value || null;
-
-    fetch('/get_image', {
-        method: 'POST',
-        headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({'date': date})
-    }).then(res => res.json())
-      .then(data => {
-          if(data.error){ alert(data.error); return; }
-
-          if(s2Layer) map.removeLayer(s2Layer);
-
-          s2Layer = new ol.layer.Tile({
-              source: new ol.source.XYZ({
-                  url: data['tile_fetcher']['url_format']
-              })
-          });
-
-          map.addLayer(s2Layer);
-      });
-}
-</script>
 </body>
 </html>
