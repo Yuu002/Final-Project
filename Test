@@ -1,16 +1,1 @@
-How would you describe your use of Earth Engine? *
-- Scientific research
-e.g., advancing remote sensing methodologies
-- Decision making
-e.g., analysis that focuses on decision support
-
-What is your research question? *
-(ช่องกรอก
-)
-What is the geographic scope of your study? *
-- Global
-- Regional
-
-Have you previously published work on this topic that used Earth Engine? *
-- Yes
-- No
+How can global satellite imagery be used to monitor vegetation characteristics and estimate above-ground biomass (AGB) over time? Specifically, how can users select any location or pixel on a global map, adjust the date, and retrieve reflectance, vegetation indices, and estimated AGB values?
