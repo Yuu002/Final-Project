@@ -1,3 +1,6 @@
+Harmonized Sentinel-2 MSI: MultiSpectral Instrument, Level-2A (SR)
+
+
 /**
  * Function to mask clouds using the Sentinel-2 QA band
  * @param {ee.Image} image Sentinel-2 image
@@ -32,3 +35,4 @@ var visualization = {
 Map.setCenter(83.277, 17.7009, 12);
 
 Map.addLayer(dataset.mean(), visualization, 'RGB');
+
