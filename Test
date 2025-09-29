@@ -1,7 +1,9 @@
-Principals with access (optional)
-Grant access to users or groups that need to perform actions as this service account. Learn more 
+import ee
 
-Service account users role
-Grant users the permissions to deploy jobs and VMs with this service account
-Service account admins role
-Grant users the permission to administer this service account
+# ใส่อีเมลของ Service Account ที่สร้างไว้
+SERVICE_ACCOUNT = 'your-service-account@your-project.iam.gserviceaccount.com'
+KEY_FILE = '/path/to/your/service-account.json'
+
+# Authenticate ด้วย Service Account
+credentials = ee.ServiceAccountCredentials(SERVICE_ACCOUNT, KEY_FILE)
+ee.Initialize(credentials)
