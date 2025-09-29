@@ -1,53 +1,62 @@
+from flask import Flask, jsonify
 import ee
 import datetime
 
-# กำหนดช่วงวันย้อนหลัง 1 วัน
-end_date = datetime.date.today()
-start_date = end_date - datetime.timedelta(days=1)
+app = Flask(__name__)
 
-# ดึง collection และเลือกภาพที่มีเมฆน้อย
-collection = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED') \
-                .filterDate(str(start_date), str(end_date)) \
-                .sort('CLOUDY_PIXEL_PERCENTAGE') \
-                .first()
+# Initialize GEE
+SERVICE_ACCOUNT = 'your-service-account@your-project.iam.gserviceaccount.com'
+KEY_FILE = 'path/to/service-account.json'
+credentials = ee.ServiceAccountCredentials(SERVICE_ACCOUNT, KEY_FILE)
+ee.Initialize(credentials)
 
-print(collection.getInfo())
+@app.route('/get_tile')
+def get_tile():
+    end_date = datetime.date.today()
+    start_date = end_date - datetime.timedelta(days=1)
+    collection = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED') \
+                    .filterDate(str(start_date), str(end_date)) \
+                    .sort('CLOUDY_PIXEL_PERCENTAGE') \
+                    .first()
+    map_params = {'bands': ['B4','B3','B2'], 'min':0, 'max':3000}
+    map_id_dict = collection.getMapId(map_params)
+    tile_url = map_id_dict['tile_fetcher'].url_format
+    return jsonify({'tile_url': tile_url})
+
+if __name__ == '__main__':
+    app.run(debug=True)
 --
-map_params = {'bands': ['B4', 'B3', 'B2'], 'min': 0, 'max': 3000}
-map_id_dict = collection.getMapId(map_params)
-tile_url = map_id_dict['tile_fetcher'].url_format
-print(tile_url)
---
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <title>Sentinel-2 Map</title>
+  <meta charset="UTF-8">
+  <title>GEE OpenLayers Map</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ol/ol.css">
   <script src="https://cdn.jsdelivr.net/npm/ol/ol.js"></script>
-  <style>
-    #map { width: 100%; height: 90vh; }
-  </style>
+  <style>#map {width:100%;height:90vh;}</style>
 </head>
 <body>
   <div id="map"></div>
   <script>
-    const map = new ol.Map({
-      target: 'map',
-      layers: [
-        new ol.layer.Tile({ 
-          source: new ol.source.OSM() // พื้นหลัง OpenStreetMap
-        }),
-        new ol.layer.Tile({
-          source: new ol.source.XYZ({
-            url: 'YOUR_TILE_URL_HERE'  // แทนที่ด้วย tile_url จาก Python
+    async function loadMap() {
+      const response = await fetch('/get_tile');
+      const data = await response.json();
+      const map = new ol.Map({
+        target: 'map',
+        layers: [
+          new ol.layer.Tile({source: new ol.source.OSM()}),
+          new ol.layer.Tile({
+            source: new ol.source.XYZ({url: data.tile_url})
           })
+        ],
+        view: new ol.View({
+          center: ol.proj.fromLonLat([0,0]),
+          zoom: 2
         })
-      ],
-      view: new ol.View({
-        center: ol.proj.fromLonLat([0, 0]),
-        zoom: 2
-      })
-    });
+      });
+    }
+    loadMap();
   </script>
 </body>
 </html>
