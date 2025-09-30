@@ -91,6 +91,12 @@
         transform: translateY(0);
     }
 
+    .btn:disabled {
+        background: #ccc;
+        cursor: not-allowed;
+        transform: none;
+    }
+
     .info {
         margin-top: 15px;
         padding: 12px;
@@ -129,6 +135,51 @@
         font-weight: 500;
     }
 
+    .message-box {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        background: white;
+        padding: 30px;
+        border-radius: 12px;
+        box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+        z-index: 2001;
+        display: none;
+        text-align: center;
+        max-width: 400px;
+    }
+
+    .message-box.active {
+        display: block;
+    }
+
+    .message-box h3 {
+        color: #ff6b6b;
+        margin-bottom: 15px;
+        font-size: 20px;
+    }
+
+    .message-box p {
+        color: #666;
+        line-height: 1.6;
+        margin-bottom: 20px;
+    }
+
+    .message-box button {
+        padding: 10px 30px;
+        background: #667eea;
+        color: white;
+        border: none;
+        border-radius: 6px;
+        cursor: pointer;
+        font-weight: 600;
+    }
+
+    .message-box button:hover {
+        background: #5568d3;
+    }
+
     @media (max-width: 768px) {
         .controls {
             top: 10px;
@@ -146,45 +197,62 @@
     <div class="loading" id="loading">Loading satellite imagery...</div>
 
 ```
+<div class="message-box" id="messageBox">
+    <h3>⚠️ No Image Available</h3>
+    <p id="messageText">Don't have image yet, sorry. Please try a different date or location.</p>
+    <button onclick="closeMessage()">OK</button>
+</div>
+
 <div class="controls">
     <h2>🛰️ Satellite Time Machine</h2>
     
     <div class="control-group">
         <label for="dateInput">Select Date:</label>
-        <input type="date" id="dateInput" min="2015-06-23" max="2025-09-30">
+        <input type="date" id="dateInput" min="2017-01-01" max="2025-09-30">
     </div>
     
-    <button class="btn" onclick="updateSatelliteImage()">Update Imagery</button>
+    <button class="btn" id="updateBtn" onclick="updateSatelliteImage()">Update Imagery</button>
     
     <div class="current-date" id="currentDate">
-        Current: Today
+        Current: Latest Available
     </div>
     
     <div class="info">
         📍 Pan and zoom the map to explore<br>
-        📅 Sentinel-2 data from June 2015 onwards<br>
-        ☁️ Cloud cover may vary by date
+        📅 Landsat 8 data from 2017 onwards<br>
+        ⏱️ Images update every 16 days<br>
+        ☁️ May show "no image" if unavailable
     </div>
 </div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
-    // Initialize map
-    let map = L.map('map').setView([37.7749, -122.4194], 10); // San Francisco
+    let map = L.map('map').setView([37.7749, -122.4194], 10);
 
-    // Add base layer (OpenStreetMap)
     let baseLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '© OpenStreetMap contributors'
+        attribution: '© OpenStreetMap contributors',
+        opacity: 0.3
     }).addTo(map);
 
     let satelliteLayer = null;
     let currentDate = new Date().toISOString().split('T')[0];
+    let tilesLoaded = 0;
+    let tilesErrored = 0;
+    let loadingTimeout = null;
 
-    // Set default date to today
     document.getElementById('dateInput').value = currentDate;
     document.getElementById('dateInput').max = currentDate;
 
-    // Initialize with Sentinel-2 imagery
+    function showMessage(message) {
+        document.getElementById('messageText').textContent = message;
+        document.getElementById('messageBox').classList.add('active');
+        document.getElementById('loading').classList.remove('active');
+    }
+
+    function closeMessage() {
+        document.getElementById('messageBox').classList.remove('active');
+    }
+
     function updateSatelliteImage() {
         const dateInput = document.getElementById('dateInput').value;
         if (!dateInput) {
@@ -192,98 +260,107 @@
             return;
         }
 
-        // Show loading
         document.getElementById('loading').classList.add('active');
+        document.getElementById('updateBtn').disabled = true;
+        tilesLoaded = 0;
+        tilesErrored = 0;
 
-        // Remove old satellite layer
         if (satelliteLayer) {
             map.removeLayer(satelliteLayer);
         }
 
-        // Using Sentinel Hub's free tier with their public instance
-        // This uses Sentinel-2 L2A data (atmospherically corrected)
-        const sentinelUrl = `https://services.sentinel-hub.com/ogc/wms/YOUR_INSTANCE_ID?` +
-            `SERVICE=WMS&REQUEST=GetMap&LAYERS=TRUE-COLOR&` +
-            `STYLES=&FORMAT=image/png&TRANSPARENT=true&` +
-            `VERSION=1.1.1&WIDTH=256&HEIGHT=256&SRS=EPSG:3857&` +
-            `TIME=${dateInput}/${dateInput}&` +
-            `BBOX={bbox-epsg-3857}`;
+        // Using USGS Landsat 8 imagery via ArcGIS REST service
+        // This provides actual dated imagery
+        const year = dateInput.substring(0, 4);
+        const month = dateInput.substring(5, 7);
+        const day = dateInput.substring(8, 10);
 
-        // For demo purposes, we'll use a working alternative: Planet Labs imagery via their public endpoint
-        // Using Mapbox Satellite (requires token, but has free tier)
-        // Alternative: EOX's Sentinel-2 cloudless which is free
+        // Option 1: Use Planet Labs API (free tier available)
+        // Option 2: Use Mapbox Satellite with dates
+        // Option 3: Use USGS Earth Explorer Landsat
         
-        const eoxUrl = `https://tiles.maps.eox.at/wms?` +
-            `service=WMS&request=GetMap&layers=s2cloudless-2021_3857&` +
-            `styles=&format=image/png&transparent=false&` +
-            `version=1.1.1&width=256&height=256&srs=EPSG:3857&` +
-            `bbox={bbox-epsg-3857}`;
+        // Using a combination approach with Landsat 8
+        const landsatUrl = `https://services.arcgisonline.com/arcgis/rest/services/Landsat/MS/ImageServer/exportImage?` +
+            `bbox={bbox-epsg-3857}&` +
+            `bboxSR=3857&` +
+            `size=256,256&` +
+            `imageSR=3857&` +
+            `time=${new Date(dateInput).getTime()},${new Date(dateInput).getTime() + 86400000}&` +
+            `format=png&` +
+            `pixelType=U8&` +
+            `interpolation=RSP_BilinearInterpolation&` +
+            `compression=&` +
+            `compressionQuality=&` +
+            `bandIds=&` +
+            `mosaicRule=&` +
+            `renderingRule=&` +
+            `f=image`;
 
-        // For time-specific imagery, using USGS Earth Explorer / Landsat
-        // Better option: Using Sentinel Hub's public WMS with time parameter
-        const timeSpecificUrl = `https://services.sentinel-hub.com/ogc/wms/a9a111b6-8c12-4b16-a9f6-c8fc3b0a0d6f?` +
-            `service=WMS&request=GetMap&layers=TRUE-COLOR&` +
-            `styles=&format=image/png&transparent=true&` +
-            `version=1.3.0&width=256&height=256&crs=EPSG:3857&` +
-            `time=${dateInput}/${dateInput}&` +
-            `bbox={bbox-epsg-3857}`;
-
-        // Add new satellite layer with time parameter
-        satelliteLayer = L.tileLayer(timeSpecificUrl, {
-            attribution: '© Copernicus Sentinel-2 data',
+        satelliteLayer = L.tileLayer(landsatUrl, {
+            attribution: '© USGS Landsat',
             maxZoom: 18,
-            tileSize: 256
+            tileSize: 256,
+            errorTileUrl: 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'
         });
 
-        satelliteLayer.on('tileerror', function(error) {
-            console.log('Tile error - using alternative source');
-            // Fallback to static satellite imagery if time-specific fails
-            if (satelliteLayer) {
-                map.removeLayer(satelliteLayer);
-            }
-            satelliteLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-                attribution: 'Esri, Maxar, Earthstar Geographics',
-                maxZoom: 18
-            }).addTo(map);
+        let tileLoadCheck = 0;
+        const maxTileCheck = 15;
+
+        satelliteLayer.on('tileload', function() {
+            tilesLoaded++;
+            tileLoadCheck++;
             
-            document.getElementById('loading').classList.remove('active');
+            if (tileLoadCheck >= 5) {
+                document.getElementById('loading').classList.remove('active');
+                document.getElementById('updateBtn').disabled = false;
+                document.getElementById('currentDate').textContent = `Current: ${dateInput}`;
+            }
         });
 
-        satelliteLayer.on('load', function() {
-            document.getElementById('loading').classList.remove('active');
-            document.getElementById('currentDate').textContent = `Current: ${dateInput}`;
+        satelliteLayer.on('tileerror', function() {
+            tilesErrored++;
+            tileLoadCheck++;
+            
+            if (tilesErrored >= 10 || tileLoadCheck >= maxTileCheck) {
+                if (satelliteLayer) {
+                    map.removeLayer(satelliteLayer);
+                }
+                
+                showMessage(`Don't have image yet, sorry. The satellite may not have captured imagery for ${dateInput} at this location. Try a different date (images available every 16 days) or zoom to a different area.`);
+                document.getElementById('updateBtn').disabled = false;
+                document.getElementById('currentDate').textContent = `No image for: ${dateInput}`;
+            }
         });
 
         satelliteLayer.addTo(map);
 
-        // Hide loading after timeout if tiles don't load
-        setTimeout(() => {
-            document.getElementById('loading').classList.remove('active');
-        }, 3000);
+        // Fallback timeout
+        clearTimeout(loadingTimeout);
+        loadingTimeout = setTimeout(() => {
+            if (tilesLoaded < 3) {
+                if (satelliteLayer) {
+                    map.removeLayer(satelliteLayer);
+                }
+                showMessage(`Don't have image yet, sorry. No imagery available for this date and location. Please try:\n\n• A more recent date\n• Different location (pan/zoom map)\n• Date from 2017 onwards`);
+                document.getElementById('currentDate').textContent = `No image available`;
+            } else {
+                document.getElementById('loading').classList.remove('active');
+                document.getElementById('currentDate').textContent = `Current: ${dateInput}`;
+            }
+            document.getElementById('updateBtn').disabled = false;
+        }, 8000);
     }
 
-    // Load initial imagery
     updateSatelliteImage();
 
-    // Allow Enter key to update
     document.getElementById('dateInput').addEventListener('keypress', function(e) {
         if (e.key === 'Enter') {
             updateSatelliteImage();
         }
     });
 
-    // Add some helpful location markers
-    const locations = [
-        { name: 'San Francisco', coords: [37.7749, -122.4194] },
-        { name: 'New York', coords: [40.7128, -74.0060] },
-        { name: 'London', coords: [51.5074, -0.1278] },
-        { name: 'Tokyo', coords: [35.6762, 139.6503] },
-        { name: 'Dubai', coords: [25.2048, 55.2708] }
-    ];
-
-    // Add click handler for map to show coordinates
     map.on('click', function(e) {
-        console.log(`Clicked at: ${e.latlng.lat}, ${e.latlng.lng}`);
+        console.log(`Location: ${e.latlng.lat.toFixed(4)}, ${e.latlng.lng.toFixed(4)}`);
     });
 </script>
 ```
