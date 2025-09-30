@@ -1,8 +1,5 @@
-var s2 = ee.ImageCollection("COPERNICUS/S2")
-  .filterDate('2023-01-01', '2023-01-31')
-  .filterBounds(ee.Geometry.Point([100.5, 13.7]))
-  .median()
-  .select(['B4','B3','B2']);  // RGB
+import ee
+ee.Initialize()
 
-Map.centerObject(s2, 10);
-Map.addLayer(s2, {min:0, max:3000}, "Sentinel RGB");
+s2 = ee.ImageCollection("COPERNICUS/S2")
+print(s2.size().getInfo())   # จำนวนภาพ Sentinel-2
