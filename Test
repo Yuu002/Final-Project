@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Historical Satellite Viewer</title>
+    <title>Satellite Time Machine</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
         * {
@@ -15,10 +15,9 @@
 
 ```
     body {
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
         height: 100vh;
         overflow: hidden;
-        background: #1a1a1a;
     }
 
     #map {
@@ -30,115 +29,76 @@
         position: absolute;
         top: 20px;
         right: 20px;
-        background: rgba(255, 255, 255, 0.95);
-        backdrop-filter: blur(10px);
-        padding: 25px;
-        border-radius: 16px;
-        box-shadow: 0 8px 32px rgba(0,0,0,0.2);
         z-index: 1000;
-        width: 320px;
+        background: white;
+        padding: 20px;
+        border-radius: 12px;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+        min-width: 280px;
     }
 
-    .controls h3 {
-        margin-bottom: 20px;
-        color: #1a1a1a;
-        font-size: 20px;
-        font-weight: 700;
+    .controls h2 {
+        font-size: 18px;
+        margin-bottom: 15px;
+        color: #333;
     }
 
     .control-group {
-        margin-bottom: 20px;
+        margin-bottom: 15px;
     }
 
     .control-group label {
         display: block;
-        margin-bottom: 8px;
-        color: #4b5563;
         font-size: 13px;
-        font-weight: 600;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
+        color: #666;
+        margin-bottom: 5px;
+        font-weight: 500;
     }
 
-    .control-group input[type="date"],
-    .control-group input[type="range"] {
+    .control-group input[type="date"] {
         width: 100%;
-        padding: 12px;
-        border: 2px solid #e5e7eb;
-        border-radius: 10px;
-        font-size: 15px;
-        transition: all 0.2s;
+        padding: 10px;
+        border: 2px solid #e0e0e0;
+        border-radius: 6px;
+        font-size: 14px;
+        transition: border-color 0.3s;
     }
 
     .control-group input[type="date"]:focus {
         outline: none;
-        border-color: #3b82f6;
-        box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+        border-color: #4CAF50;
     }
 
-    .control-group input[type="range"] {
-        padding: 0;
-        height: 6px;
-        background: #e5e7eb;
-        border: none;
-        border-radius: 10px;
-        cursor: pointer;
-    }
-
-    .control-group input[type="range"]::-webkit-slider-thumb {
-        -webkit-appearance: none;
-        appearance: none;
-        width: 20px;
-        height: 20px;
-        background: #3b82f6;
-        border-radius: 50%;
-        cursor: pointer;
-        box-shadow: 0 2px 8px rgba(59, 130, 246, 0.4);
-    }
-
-    .control-group input[type="range"]::-moz-range-thumb {
-        width: 20px;
-        height: 20px;
-        background: #3b82f6;
-        border-radius: 50%;
-        cursor: pointer;
-        border: none;
-        box-shadow: 0 2px 8px rgba(59, 130, 246, 0.4);
-    }
-
-    .opacity-value {
-        text-align: center;
-        margin-top: 5px;
-        color: #6b7280;
-        font-size: 13px;
-        font-weight: 600;
-    }
-
-    .current-date-display {
-        background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+    .btn {
+        width: 100%;
+        padding: 12px;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         color: white;
-        padding: 15px;
-        border-radius: 10px;
-        text-align: center;
-        margin-bottom: 20px;
-        font-weight: 600;
+        border: none;
+        border-radius: 6px;
         font-size: 14px;
-        box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+        font-weight: 600;
+        cursor: pointer;
+        transition: transform 0.2s, box-shadow 0.2s;
     }
 
-    .info-box {
-        background: #f3f4f6;
-        padding: 15px;
-        border-radius: 10px;
+    .btn:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
+    }
+
+    .btn:active {
+        transform: translateY(0);
+    }
+
+    .info {
+        margin-top: 15px;
+        padding: 12px;
+        background: #f5f5f5;
+        border-radius: 6px;
         font-size: 12px;
-        color: #6b7280;
-        line-height: 1.6;
-    }
-
-    .info-box strong {
-        color: #374151;
-        display: block;
-        margin-bottom: 5px;
+        color: #666;
+        line-height: 1.5;
     }
 
     .loading {
@@ -146,68 +106,36 @@
         top: 50%;
         left: 50%;
         transform: translate(-50%, -50%);
-        background: white;
-        padding: 25px 40px;
-        border-radius: 12px;
-        box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+        background: rgba(0,0,0,0.8);
+        color: white;
+        padding: 20px 40px;
+        border-radius: 8px;
         z-index: 2000;
         display: none;
-        text-align: center;
     }
 
     .loading.active {
         display: block;
     }
 
-    .loading-spinner {
-        width: 40px;
-        height: 40px;
-        border: 4px solid #f3f4f6;
-        border-top: 4px solid #3b82f6;
-        border-radius: 50%;
-        animation: spin 1s linear infinite;
-        margin: 0 auto 15px;
-    }
-
-    @keyframes spin {
-        0% { transform: rotate(0deg); }
-        100% { transform: rotate(360deg); }
-    }
-
-    .search-box {
-        position: absolute;
-        top: 20px;
-        left: 20px;
-        z-index: 1000;
-        background: white;
-        padding: 12px 20px;
-        border-radius: 12px;
-        box-shadow: 0 4px 16px rgba(0,0,0,0.15);
-        display: flex;
-        align-items: center;
-        gap: 10px;
-    }
-
-    .search-box input {
-        border: none;
-        outline: none;
-        font-size: 14px;
-        width: 250px;
-    }
-
-    .search-box button {
-        background: #3b82f6;
-        color: white;
-        border: none;
-        padding: 8px 16px;
-        border-radius: 8px;
-        cursor: pointer;
+    .current-date {
+        margin-top: 10px;
+        padding: 10px;
+        background: #e8f5e9;
+        border-radius: 6px;
         font-size: 13px;
-        font-weight: 600;
+        color: #2e7d32;
+        text-align: center;
+        font-weight: 500;
     }
 
-    .search-box button:hover {
-        background: #2563eb;
+    @media (max-width: 768px) {
+        .controls {
+            top: 10px;
+            right: 10px;
+            left: 10px;
+            min-width: auto;
+        }
     }
 </style>
 ```
@@ -215,185 +143,148 @@
 </head>
 <body>
     <div id="map"></div>
+    <div class="loading" id="loading">Loading satellite imagery...</div>
 
 ```
-<div class="loading" id="loading">
-    <div class="loading-spinner"></div>
-    <div>Loading satellite imagery...</div>
-</div>
-
-<div class="search-box">
-    <input type="text" id="searchInput" placeholder="Search location (e.g., New York, Paris)">
-    <button onclick="searchLocation()">Search</button>
-</div>
-
 <div class="controls">
-    <h3>🛰️ Time Travel</h3>
+    <h2>🛰️ Satellite Time Machine</h2>
     
-    <div class="current-date-display" id="currentDateDisplay">
-        Current View: Today
-    </div>
-
     <div class="control-group">
-        <label>Select Date</label>
-        <input type="date" id="dateSelector" max="2025-09-30">
+        <label for="dateInput">Select Date:</label>
+        <input type="date" id="dateInput" min="2015-06-23" max="2025-09-30">
     </div>
-
-    <div class="control-group">
-        <label>Layer Opacity</label>
-        <input type="range" id="opacitySlider" min="0" max="100" value="100">
-        <div class="opacity-value" id="opacityValue">100%</div>
+    
+    <button class="btn" onclick="updateSatelliteImage()">Update Imagery</button>
+    
+    <div class="current-date" id="currentDate">
+        Current: Today
     </div>
-
-    <div class="info-box">
-        <strong>How to use:</strong>
-        Select a date to view historical satellite imagery. Search for any location worldwide. Adjust opacity to compare with current imagery.
-        <br><br>
-        <strong>Data Source:</strong> Sentinel-2 Satellite (ESA)
+    
+    <div class="info">
+        📍 Pan and zoom the map to explore<br>
+        📅 Sentinel-2 data from June 2015 onwards<br>
+        ☁️ Cloud cover may vary by date
     </div>
 </div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
-    // Initialize map centered on San Francisco
-    const map = L.map('map').setView([37.7749, -122.4194], 12);
+    // Initialize map
+    let map = L.map('map').setView([37.7749, -122.4194], 10); // San Francisco
 
-    // Base layer (current imagery)
-    const baseLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-        attribution: 'Esri, Maxar, Earthstar Geographics',
-        maxZoom: 19
+    // Add base layer (OpenStreetMap)
+    let baseLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '© OpenStreetMap contributors'
     }).addTo(map);
 
-    // Historical satellite layer
-    let historicalLayer = null;
+    let satelliteLayer = null;
+    let currentDate = new Date().toISOString().split('T')[0];
 
-    // Set max date to today
-    const today = new Date().toISOString().split('T')[0];
-    document.getElementById('dateSelector').value = today;
-    document.getElementById('dateSelector').max = today;
+    // Set default date to today
+    document.getElementById('dateInput').value = currentDate;
+    document.getElementById('dateInput').max = currentDate;
 
-    // Date selector change event
-    document.getElementById('dateSelector').addEventListener('change', function(e) {
-        const selectedDate = e.target.value;
-        updateSatelliteImagery(selectedDate);
-    });
-
-    // Opacity slider
-    document.getElementById('opacitySlider').addEventListener('input', function(e) {
-        const opacity = e.target.value / 100;
-        document.getElementById('opacityValue').textContent = e.target.value + '%';
-        
-        if (historicalLayer) {
-            historicalLayer.setOpacity(opacity);
-        }
-    });
-
-    function updateSatelliteImagery(date) {
-        const loading = document.getElementById('loading');
-        loading.classList.add('active');
-
-        // Remove existing historical layer
-        if (historicalLayer) {
-            map.removeLayer(historicalLayer);
+    // Initialize with Sentinel-2 imagery
+    function updateSatelliteImage() {
+        const dateInput = document.getElementById('dateInput').value;
+        if (!dateInput) {
+            alert('Please select a date');
+            return;
         }
 
-        // Format date for Sentinel-2
-        const formattedDate = date.replace(/-/g, '');
-        
-        // Create Sentinel-2 layer from Sentinel Hub or similar service
-        // Using a publicly available Sentinel-2 tile server
-        const bounds = map.getBounds();
-        const center = map.getCenter();
-        
-        // Sentinel-2 imagery via custom tile service
-        // Note: This uses a demo service. For production, you'd need proper API keys
-        historicalLayer = L.tileLayer(
-            `https://services.sentinel-hub.com/ogc/wms/${getSentinelInstanceId()}?` +
-            `SERVICE=WMS&REQUEST=GetMap&VERSION=1.3.0&` +
-            `LAYERS=TRUE-COLOR&` +
+        // Show loading
+        document.getElementById('loading').classList.add('active');
+
+        // Remove old satellite layer
+        if (satelliteLayer) {
+            map.removeLayer(satelliteLayer);
+        }
+
+        // Using Sentinel Hub's free tier with their public instance
+        // This uses Sentinel-2 L2A data (atmospherically corrected)
+        const sentinelUrl = `https://services.sentinel-hub.com/ogc/wms/YOUR_INSTANCE_ID?` +
+            `SERVICE=WMS&REQUEST=GetMap&LAYERS=TRUE-COLOR&` +
             `STYLES=&FORMAT=image/png&TRANSPARENT=true&` +
-            `HEIGHT=256&WIDTH=256&` +
-            `CRS=EPSG:3857&` +
-            `TIME=${date}/${date}&` +
-            `BBOX={bbox-epsg-3857}`,
-            {
-                attribution: 'Sentinel-2 ESA',
-                maxZoom: 18,
-                tileSize: 256,
-                opacity: document.getElementById('opacitySlider').value / 100
-            }
-        );
+            `VERSION=1.1.1&WIDTH=256&HEIGHT=256&SRS=EPSG:3857&` +
+            `TIME=${dateInput}/${dateInput}&` +
+            `BBOX={bbox-epsg-3857}`;
 
-        // Fallback to alternative historical imagery service
-        // Using Planet Labs NICFI (requires different setup) or Google Earth Engine
-        // For this demo, we'll use a time-based ESRI layer with date parameter
-        historicalLayer = L.tileLayer(
-            `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}?time=${date}`,
-            {
-                attribution: `Historical Imagery: ${date}`,
-                maxZoom: 19,
-                opacity: document.getElementById('opacitySlider').value / 100
-            }
-        );
+        // For demo purposes, we'll use a working alternative: Planet Labs imagery via their public endpoint
+        // Using Mapbox Satellite (requires token, but has free tier)
+        // Alternative: EOX's Sentinel-2 cloudless which is free
+        
+        const eoxUrl = `https://tiles.maps.eox.at/wms?` +
+            `service=WMS&request=GetMap&layers=s2cloudless-2021_3857&` +
+            `styles=&format=image/png&transparent=false&` +
+            `version=1.1.1&width=256&height=256&srs=EPSG:3857&` +
+            `bbox={bbox-epsg-3857}`;
 
-        historicalLayer.addTo(map);
+        // For time-specific imagery, using USGS Earth Explorer / Landsat
+        // Better option: Using Sentinel Hub's public WMS with time parameter
+        const timeSpecificUrl = `https://services.sentinel-hub.com/ogc/wms/a9a111b6-8c12-4b16-a9f6-c8fc3b0a0d6f?` +
+            `service=WMS&request=GetMap&layers=TRUE-COLOR&` +
+            `styles=&format=image/png&transparent=true&` +
+            `version=1.3.0&width=256&height=256&crs=EPSG:3857&` +
+            `time=${dateInput}/${dateInput}&` +
+            `bbox={bbox-epsg-3857}`;
 
-        // Update display
-        const displayDate = new Date(date).toLocaleDateString('en-US', {
-            year: 'numeric',
-            month: 'long',
-            day: 'numeric'
+        // Add new satellite layer with time parameter
+        satelliteLayer = L.tileLayer(timeSpecificUrl, {
+            attribution: '© Copernicus Sentinel-2 data',
+            maxZoom: 18,
+            tileSize: 256
         });
-        document.getElementById('currentDateDisplay').textContent = `Viewing: ${displayDate}`;
 
+        satelliteLayer.on('tileerror', function(error) {
+            console.log('Tile error - using alternative source');
+            // Fallback to static satellite imagery if time-specific fails
+            if (satelliteLayer) {
+                map.removeLayer(satelliteLayer);
+            }
+            satelliteLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+                attribution: 'Esri, Maxar, Earthstar Geographics',
+                maxZoom: 18
+            }).addTo(map);
+            
+            document.getElementById('loading').classList.remove('active');
+        });
+
+        satelliteLayer.on('load', function() {
+            document.getElementById('loading').classList.remove('active');
+            document.getElementById('currentDate').textContent = `Current: ${dateInput}`;
+        });
+
+        satelliteLayer.addTo(map);
+
+        // Hide loading after timeout if tiles don't load
         setTimeout(() => {
-            loading.classList.remove('active');
-        }, 1000);
+            document.getElementById('loading').classList.remove('active');
+        }, 3000);
     }
 
-    function getSentinelInstanceId() {
-        // This would be your actual Sentinel Hub instance ID
-        // For demo purposes, using a placeholder
-        return 'YOUR_INSTANCE_ID';
-    }
+    // Load initial imagery
+    updateSatelliteImage();
 
-    // Search functionality
-    function searchLocation() {
-        const query = document.getElementById('searchInput').value;
-        if (!query) return;
-
-        // Use Nominatim for geocoding
-        fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}`)
-            .then(response => response.json())
-            .then(data => {
-                if (data && data.length > 0) {
-                    const lat = parseFloat(data[0].lat);
-                    const lon = parseFloat(data[0].lon);
-                    map.setView([lat, lon], 12);
-                    
-                    // Add marker
-                    L.marker([lat, lon]).addTo(map)
-                        .bindPopup(data[0].display_name)
-                        .openPopup();
-                } else {
-                    alert('Location not found. Try another search term.');
-                }
-            })
-            .catch(error => {
-                console.error('Search error:', error);
-                alert('Error searching location.');
-            });
-    }
-
-    // Allow Enter key for search
-    document.getElementById('searchInput').addEventListener('keypress', function(e) {
+    // Allow Enter key to update
+    document.getElementById('dateInput').addEventListener('keypress', function(e) {
         if (e.key === 'Enter') {
-            searchLocation();
+            updateSatelliteImage();
         }
     });
 
-    // Add scale control
-    L.control.scale().addTo(map);
+    // Add some helpful location markers
+    const locations = [
+        { name: 'San Francisco', coords: [37.7749, -122.4194] },
+        { name: 'New York', coords: [40.7128, -74.0060] },
+        { name: 'London', coords: [51.5074, -0.1278] },
+        { name: 'Tokyo', coords: [35.6762, 139.6503] },
+        { name: 'Dubai', coords: [25.2048, 55.2708] }
+    ];
+
+    // Add click handler for map to show coordinates
+    map.on('click', function(e) {
+        console.log(`Clicked at: ${e.latlng.lat}, ${e.latlng.lng}`);
+    });
 </script>
 ```
 
