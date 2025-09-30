@@ -1,9 +1,17 @@
 import ee
+
+# Initialize GEE
 ee.Initialize()
 
-# ทดสอบดึงข้อมูล
-img = ee.Image('COPERNICUS/S2/20190101T000239_20190101T000239_T56PFR')
-print(img.getInfo())
+# เรียก Sentinel-2 (Surface Reflectance)
+collection = ee.ImageCollection("COPERNICUS/S2_SR") \
+    .filterDate('2019-01-01', '2019-01-05') \
+    .filterBounds(ee.Geometry.Point([99.5, 19.0]))  # ตัวอย่างพิกัด
+
+# เอาภาพแรกมา
+image = collection.first()
+
+print(image.getInfo())
 
 from flask import Flask, request, jsonify, render_template
 from flask_cors import CORS
@@ -279,4 +287,5 @@ document.getElementById('get_values').addEventListener('click', async () => {
 </script>
 </body>
 </html>
+
 
