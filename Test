@@ -1,91 +1,43 @@
-from flask import Flask, request, jsonify, send_from_directory
-from flask_cors import CORS
-import ee
-import datetime
-import os
+def mask_s2_clouds(image):
+  """Masks clouds in a Sentinel-2 image using the QA band.
 
-# ---- IMPORTANT: ใส่ project ----
-ee.Initialize(project='map-web-473508')
-# --------------------------------
+  Args:
+      image (ee.Image): A Sentinel-2 image.
 
-app = Flask(__name__, static_folder=".", static_url_path="")
-CORS(app)
+  Returns:
+      ee.Image: A cloud-masked Sentinel-2 image.
+  """
+  qa = image.select('QA60')
 
-# ฟังก์ชันสร้าง composite
-def create_s2_composite(start_date, end_date, vis_params=None):
-    collection = (ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
-                  .filterDate(start_date, end_date)
-                  .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 30))
-                  .select(['B4','B8','B3','B2','B8A','B11','B12']))
-    image = collection.median()
-    return image
+  # Bits 10 and 11 are clouds and cirrus, respectively.
+  cloud_bit_mask = 1 << 10
+  cirrus_bit_mask = 1 << 11
 
-# ✅ เสิร์ฟ index.html เวลาเปิด /
-@app.route('/')
-def root():
-    return send_from_directory(".", "index.html")
+  # Both flags should be set to zero, indicating clear conditions.
+  mask = (
+      qa.bitwiseAnd(cloud_bit_mask)
+      .eq(0)
+      .And(qa.bitwiseAnd(cirrus_bit_mask).eq(0))
+  )
 
-@app.route('/get_map', methods=['POST'])
-def get_map():
-    data = request.get_json(force=True)
-    start = data.get('start')
-    end = data.get('end')
-    map_params = data.get('map_params', {"bands": ['B4','B3','B2'], "min": 0, "max": 3000})
+  return image.updateMask(mask).divide(10000)
 
-    try:
-        datetime.datetime.strptime(start, '%Y-%m-%d')
-        datetime.datetime.strptime(end, '%Y-%m-%d')
-    except Exception:
-        return jsonify({"error": "Invalid date format, use YYYY-MM-DD"}), 400
 
-    image = create_s2_composite(start, end)
-    mapid_dict = image.getMapId(map_params)
-    tile_url = mapid_dict['tile_fetcher'].url_format
+dataset = (
+    ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
+    .filterDate('2020-01-01', '2020-01-30')
+    # Pre-filter to get less cloudy granules.
+    .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
+    .map(mask_s2_clouds)
+)
 
-    return jsonify({
-        "tile_url": tile_url,
-        "mapid": mapid_dict,
-        "attribution": "COPERNICUS/S2_SR_HARMONIZED"
-    })
+visualization = {
+    'min': 0.0,
+    'max': 0.3,
+    'bands': ['B4', 'B3', 'B2'],
+}
 
-@app.route('/get_pixel', methods=['POST'])
-def get_pixel():
-    data = request.get_json(force=True)
-    lon = float(data.get('lon'))
-    lat = float(data.get('lat'))
-    start = data.get('start')
-    end = data.get('end')
-    scale = int(data.get('scale', 10))
-
-    try:
-        point = ee.Geometry.Point([lon, lat])
-        image = create_s2_composite(start, end)
-
-        bands = ['B4','B8']
-        region = image.reduceRegion(
-            reducer=ee.Reducer.first(),
-            geometry=point,
-            scale=scale
-        )
-
-        bands_dict = region.getInfo()
-        result = {}
-        for b in bands:
-            raw = bands_dict.get(b)
-            result[b] = None if raw is None else float(raw) / 10000.0
-
-        return jsonify({
-            "lon": lon,
-            "lat": lat,
-            "start": start,
-            "end": end,
-            "scale": scale,
-            "reflectance": result,
-            "raw": {k: bands_dict.get(k) for k in bands}
-        })
-
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-if __name__ == '__main__':
-    app.run(debug=True, port=5000)
+m = geemap.Map()
+m.set_center(83.277, 17.7009, 12)
+m.add_layer(dataset.mean(), visualization, 'RGB')
+m
