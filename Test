@@ -1,5 +1,1 @@
-import ee
-ee.Initialize()
-
-s2 = ee.ImageCollection("COPERNICUS/S2")
-print(s2.size().getInfo())   # จำนวนภาพ Sentinel-2
+https://ee-thitisorn2210.projects.earthengine.app/view/agb
