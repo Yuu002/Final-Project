@@ -1,49 +1,45 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 import ee
-import json
 import datetime
+import os
 
-# ---- IMPORTANT: ใส่ project ตามที่ร้องขอ ----
+# ---- IMPORTANT: ใส่ project ----
 ee.Initialize(project='map-web-473508')
-# --------------------------------------------
+# --------------------------------
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder=".", static_url_path="")
 CORS(app)
 
-# ฟังก์ชันช่วยสร้าง composite และ map tiles
+# ฟังก์ชันสร้าง composite
 def create_s2_composite(start_date, end_date, vis_params=None):
-    """
-    คืนค่า ee.Image composite (median) จาก COPERNICUS/S2_SR_HARMONIZED
-    """
     collection = (ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
                   .filterDate(start_date, end_date)
                   .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 30))
-                  .select(['B4','B8','B3','B2','B8A','B11','B12']))  # เลือก bands ที่ต้องการ
-    # ใช้ median composite เพื่อให้แสดงภาพช่วงเวลาที่เลือกได้ชัดเจนขึ้น
+                  .select(['B4','B8','B3','B2','B8A','B11','B12']))
     image = collection.median()
     return image
 
+# ✅ เสิร์ฟ index.html เวลาเปิด /
+@app.route('/')
+def root():
+    return send_from_directory(".", "index.html")
+
 @app.route('/get_map', methods=['POST'])
 def get_map():
-    """
-    รับ JSON: { "start":"YYYY-MM-DD", "end":"YYYY-MM-DD", "map_params": { "min":0, "max":3000, "bands":["B4","B3","B2"] } }
-    คืนค่า: { "tile_url": "...", "attribution": "...", "mapid": {...} }
-    """
     data = request.get_json(force=True)
     start = data.get('start')
     end = data.get('end')
     map_params = data.get('map_params', {"bands": ['B4','B3','B2'], "min": 0, "max": 3000})
 
     try:
-        # ตรวจรูปแบบวันที่ (เล็กน้อย)
         datetime.datetime.strptime(start, '%Y-%m-%d')
         datetime.datetime.strptime(end, '%Y-%m-%d')
-    except Exception as e:
+    except Exception:
         return jsonify({"error": "Invalid date format, use YYYY-MM-DD"}), 400
 
     image = create_s2_composite(start, end)
-    mapid_dict = image.getMapId(map_params)  # สร้าง map id / tiles
+    mapid_dict = image.getMapId(map_params)
     tile_url = mapid_dict['tile_fetcher'].url_format
 
     return jsonify({
@@ -52,14 +48,8 @@ def get_map():
         "attribution": "COPERNICUS/S2_SR_HARMONIZED"
     })
 
-
 @app.route('/get_pixel', methods=['POST'])
 def get_pixel():
-    """
-    รับ JSON: { "lon": 100.1, "lat": 19.2, "start":"YYYY-MM-DD", "end":"YYYY-MM-DD", "scale":10 }
-    คืนค่า: { "B4": 0.0187, "B8": 0.1669, "raw": { ... } }
-    (ค่า B4/B8 เป็น reflectance ที่ถูก scale เป็น [0..1] โดย /10000)
-    """
     data = request.get_json(force=True)
     lon = float(data.get('lon'))
     lat = float(data.get('lat'))
@@ -71,7 +61,6 @@ def get_pixel():
         point = ee.Geometry.Point([lon, lat])
         image = create_s2_composite(start, end)
 
-        # ดึงค่าดิบ (DN/Scaled) ด้วย reduceRegion
         bands = ['B4','B8']
         region = image.reduceRegion(
             reducer=ee.Reducer.first(),
@@ -79,15 +68,11 @@ def get_pixel():
             scale=scale
         )
 
-        bands_dict = region.getInfo()  # คืนค่าดิบ (บาง fields อาจเป็น None)
-        # แปลงเป็น reflectance (Sentinel-2 SR มี scale factor = 1e4)
+        bands_dict = region.getInfo()
         result = {}
         for b in bands:
             raw = bands_dict.get(b)
-            if raw is None:
-                result[b] = None
-            else:
-                result[b] = float(raw) / 10000.0
+            result[b] = None if raw is None else float(raw) / 10000.0
 
         return jsonify({
             "lon": lon,
@@ -102,114 +87,5 @@ def get_pixel():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-
 if __name__ == '__main__':
     app.run(debug=True, port=5000)
---
-
-<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8" />
-  <title>Simple S2 Viewer + Pixel Picker</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-  <style>
-    body { margin:0; padding:0; font-family: sans-serif; }
-    #map { position: absolute; top: 100px; bottom:0; left:0; right:0; }
-    #controls { position: absolute; top: 8px; left:8px; right:8px; background: white; padding:10px; z-index: 1000; border-radius:6px; box-shadow:0 2px 6px rgba(0,0,0,0.2); }
-    #info { position:absolute; right:8px; top:8px; z-index:1000; background: rgba(255,255,255,0.95); padding:8px; border-radius:6px; }
-  </style>
-</head>
-<body>
-
-<div id="controls">
-  <label>Start: <input id="start" type="date" value="2019-01-01" /></label>
-  <label>End: <input id="end" type="date" value="2019-01-05" /></label>
-  <button id="btnLoad">Load Map</button>
-  <span style="margin-left:12px">คลิกที่แผนที่เพื่อดึงค่า pixel (B4, B8)</span>
-</div>
-
-<div id="info">
-  <div><strong>Selected pixel:</strong></div>
-  <div id="coords">-</div>
-  <div id="vals">-</div>
-</div>
-
-<div id="map"></div>
-
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script>
-const backend = location.origin; // ถ้ารัน frontend จาก same host. ถ้ารันแยก ให้แก้เป็น http://localhost:5000
-
-// สร้างแผนที่
-const map = L.map('map').setView([19.2, 100.1], 10);
-
-// เบสแมป
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-  maxZoom: 19,
-  attribution: '© OpenStreetMap'
-}).addTo(map);
-
-let s2Layer = null;
-
-document.getElementById('btnLoad').addEventListener('click', async () => {
-  const start = document.getElementById('start').value;
-  const end = document.getElementById('end').value;
-
-  if (!start || !end) { alert('กรุณาเลือกวันที่'); return; }
-
-  // ขอ tile จาก backend
-  const res = await fetch(backend + '/get_map', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({
-      start: start,
-      end: end,
-      map_params: { bands: ['B4','B3','B2'], min: 0, max: 3000 }
-    })
-  });
-
-  const j = await res.json();
-  if (j.error) { alert('Error: ' + j.error); return; }
-
-  // นำ tile_url มาเป็น layer บน Leaflet
-  if (s2Layer) map.removeLayer(s2Layer);
-  // tile_url มีรูปแบบที่ต้องแทน {z}/{x}/{y} อยู่แล้ว
-  s2Layer = L.tileLayer(j.tile_url, {attribution: j.attribution, maxZoom: 19});
-  s2Layer.addTo(map);
-});
-
-// จับเหตุการณ์คลิกเพื่อขอค่าพิกเซล
-map.on('click', async function(e) {
-  const start = document.getElementById('start').value;
-  const end = document.getElementById('end').value;
-  const lon = e.latlng.lng;
-  const lat = e.latlng.lat;
-
-  document.getElementById('coords').innerText = `lat: ${lat.toFixed(6)}, lon: ${lon.toFixed(6)}`;
-  document.getElementById('vals').innerText = 'Loading...';
-
-  const res = await fetch(backend + '/get_pixel', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({
-      lon: lon, lat: lat, start: start, end: end, scale: 10
-    })
-  });
-
-  const j = await res.json();
-  if (j.error) {
-    document.getElementById('vals').innerText = 'Error: ' + j.error;
-    return;
-  }
-
-  const b4 = j.reflectance.B4;
-  const b8 = j.reflectance.B8;
-  document.getElementById('vals').innerText = `B4 (red) = ${b4 === null ? '-' : b4.toFixed(4)} , B8 (nir) = ${b8 === null ? '-' : b8.toFixed(4)} (reflectance)` +
-    `\n(raw DN: B4=${j.raw.B4}, B8=${j.raw.B8})`;
-});
-</script>
-</body>
-</html>
