@@ -1,62 +1,430 @@
-from flask import Flask, jsonify
-import ee
-import datetime
-
-app = Flask(__name__)
-
-# Initialize GEE
-SERVICE_ACCOUNT = 'your-service-account@your-project.iam.gserviceaccount.com'
-KEY_FILE = 'path/to/service-account.json'
-credentials = ee.ServiceAccountCredentials(SERVICE_ACCOUNT, KEY_FILE)
-ee.Initialize(credentials)
-
-@app.route('/get_tile')
-def get_tile():
-    end_date = datetime.date.today()
-    start_date = end_date - datetime.timedelta(days=1)
-    collection = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED') \
-                    .filterDate(str(start_date), str(end_date)) \
-                    .sort('CLOUDY_PIXEL_PERCENTAGE') \
-                    .first()
-    map_params = {'bands': ['B4','B3','B2'], 'min':0, 'max':3000}
-    map_id_dict = collection.getMapId(map_params)
-    tile_url = map_id_dict['tile_fetcher'].url_format
-    return jsonify({'tile_url': tile_url})
-
-if __name__ == '__main__':
-    app.run(debug=True)
---
-
 <!DOCTYPE html>
+
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>GEE OpenLayers Map</title>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ol/ol.css">
-  <script src="https://cdn.jsdelivr.net/npm/ol/ol.js"></script>
-  <style>#map {width:100%;height:90vh;}</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Historical Satellite Viewer - NASA GIBS</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+```
+    body {
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        height: 100vh;
+        overflow: hidden;
+        background: #1a1a1a;
+    }
+
+    #map {
+        width: 100%;
+        height: 100vh;
+    }
+
+    .controls {
+        position: absolute;
+        top: 20px;
+        right: 20px;
+        background: rgba(255, 255, 255, 0.95);
+        backdrop-filter: blur(10px);
+        padding: 25px;
+        border-radius: 16px;
+        box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+        z-index: 1000;
+        width: 340px;
+    }
+
+    .controls h3 {
+        margin-bottom: 20px;
+        color: #1a1a1a;
+        font-size: 20px;
+        font-weight: 700;
+    }
+
+    .control-group {
+        margin-bottom: 20px;
+    }
+
+    .control-group label {
+        display: block;
+        margin-bottom: 8px;
+        color: #4b5563;
+        font-size: 13px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+
+    .control-group input[type="date"],
+    .control-group select {
+        width: 100%;
+        padding: 12px;
+        border: 2px solid #e5e7eb;
+        border-radius: 10px;
+        font-size: 15px;
+        transition: all 0.2s;
+    }
+
+    .control-group input[type="date"]:focus,
+    .control-group select:focus {
+        outline: none;
+        border-color: #3b82f6;
+        box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+    }
+
+    .control-group input[type="range"] {
+        width: 100%;
+        padding: 0;
+        height: 6px;
+        background: #e5e7eb;
+        border: none;
+        border-radius: 10px;
+        cursor: pointer;
+    }
+
+    .control-group input[type="range"]::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        appearance: none;
+        width: 20px;
+        height: 20px;
+        background: #3b82f6;
+        border-radius: 50%;
+        cursor: pointer;
+        box-shadow: 0 2px 8px rgba(59, 130, 246, 0.4);
+    }
+
+    .control-group input[type="range"]::-moz-range-thumb {
+        width: 20px;
+        height: 20px;
+        background: #3b82f6;
+        border-radius: 50%;
+        cursor: pointer;
+        border: none;
+        box-shadow: 0 2px 8px rgba(59, 130, 246, 0.4);
+    }
+
+    .opacity-value {
+        text-align: center;
+        margin-top: 5px;
+        color: #6b7280;
+        font-size: 13px;
+        font-weight: 600;
+    }
+
+    .current-date-display {
+        background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+        color: white;
+        padding: 15px;
+        border-radius: 10px;
+        text-align: center;
+        margin-bottom: 20px;
+        font-weight: 600;
+        font-size: 14px;
+        box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+        transition: transform 0.2s;
+    }
+
+    .info-box {
+        background: #f0fdf4;
+        border: 2px solid #86efac;
+        padding: 15px;
+        border-radius: 10px;
+        font-size: 12px;
+        color: #166534;
+        line-height: 1.6;
+    }
+
+    .info-box strong {
+        color: #15803d;
+        display: block;
+        margin-bottom: 5px;
+    }
+
+    .search-box {
+        position: absolute;
+        top: 20px;
+        left: 20px;
+        z-index: 1000;
+        background: white;
+        padding: 12px 20px;
+        border-radius: 12px;
+        box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+
+    .search-box input {
+        border: none;
+        outline: none;
+        font-size: 14px;
+        width: 250px;
+    }
+
+    .search-box button {
+        background: #3b82f6;
+        color: white;
+        border: none;
+        padding: 8px 16px;
+        border-radius: 8px;
+        cursor: pointer;
+        font-size: 13px;
+        font-weight: 600;
+    }
+
+    .search-box button:hover {
+        background: #2563eb;
+    }
+
+    .loading-indicator {
+        position: absolute;
+        bottom: 20px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: rgba(0, 0, 0, 0.8);
+        color: white;
+        padding: 10px 20px;
+        border-radius: 8px;
+        font-size: 13px;
+        z-index: 1000;
+        display: none;
+    }
+
+    .loading-indicator.active {
+        display: block;
+    }
+</style>
+```
+
 </head>
 <body>
-  <div id="map"></div>
-  <script>
-    async function loadMap() {
-      const response = await fetch('/get_tile');
-      const data = await response.json();
-      const map = new ol.Map({
-        target: 'map',
-        layers: [
-          new ol.layer.Tile({source: new ol.source.OSM()}),
-          new ol.layer.Tile({
-            source: new ol.source.XYZ({url: data.tile_url})
-          })
-        ],
-        view: new ol.View({
-          center: ol.proj.fromLonLat([0,0]),
-          zoom: 2
-        })
-      });
+    <div id="map"></div>
+
+```
+<div class="loading-indicator" id="loadingIndicator">
+    🛰️ Loading satellite imagery...
+</div>
+
+<div class="search-box">
+    <input type="text" id="searchInput" placeholder="Search location (e.g., New York, Paris)">
+    <button id="searchBtn">Search</button>
+</div>
+
+<div class="controls">
+    <h3>🛰️ NASA Time Travel</h3>
+    
+    <div class="current-date-display" id="currentDateDisplay">
+        Current View: Today
+    </div>
+
+    <div class="control-group">
+        <label>Select Date</label>
+        <input type="date" id="dateSelector" value="2024-01-01" min="2012-05-08" max="2025-09-30">
+    </div>
+
+    <div class="control-group">
+        <label>Quick Year Jump</label>
+        <input type="range" id="yearSlider" min="2012" max="2025" value="2024" step="1">
+        <div class="opacity-value" id="yearValue">2024</div>
+    </div>
+
+    <div class="control-group">
+        <label>NASA GIBS Layer</label>
+        <select id="layerSelector">
+            <option value="VIIRS_SNPP_CorrectedReflectance_TrueColor">VIIRS True Color (2012-Present)</option>
+            <option value="MODIS_Terra_CorrectedReflectance_TrueColor">MODIS Terra True Color (2000-Present)</option>
+            <option value="MODIS_Aqua_CorrectedReflectance_TrueColor">MODIS Aqua True Color (2002-Present)</option>
+        </select>
+    </div>
+
+    <div class="control-group">
+        <label>Layer Opacity</label>
+        <input type="range" id="opacitySlider" min="0" max="100" value="100">
+        <div class="opacity-value" id="opacityValue">100%</div>
+    </div>
+
+    <div class="info-box">
+        <strong>✅ REAL Historical Data!</strong>
+        Using NASA GIBS - actual satellite imagery from different dates. Change the date to see real changes in weather, seasons, and landscapes!
+        <br><br>
+        <strong>Data:</strong> NASA Worldview, EOSDIS
+    </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+    let map;
+    let currentLayer;
+    let baseLayer;
+    
+    function initMap() {
+        map = L.map('map', {
+            center: [37.7749, -122.4194],
+            zoom: 5,
+            maxZoom: 9
+        });
+        
+        // Base reference layer (OpenStreetMap for reference)
+        baseLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: 'OpenStreetMap',
+            opacity: 0.3,
+            maxZoom: 19
+        }).addTo(map);
+        
+        // Initialize with today's date
+        updateImagery();
+        
+        // Add scale
+        L.control.scale().addTo(map);
     }
-    loadMap();
-  </script>
+
+    // NASA GIBS tile URL generator
+    function getNASAGIBSUrl(layer, date) {
+        // Format date as YYYY-MM-DD
+        const formattedDate = date;
+        
+        // NASA GIBS WMTS endpoint
+        const baseUrl = 'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best';
+        
+        return baseUrl + '/' + layer + '/default/' + formattedDate + 
+               '/GoogleMapsCompatible_Level9/{z}/{y}/{x}.jpg';
+    }
+
+    // Update satellite imagery
+    function updateImagery() {
+        const selectedDate = document.getElementById('dateSelector').value;
+        const selectedLayer = document.getElementById('layerSelector').value;
+        const opacity = document.getElementById('opacitySlider').value / 100;
+        
+        // Show loading indicator
+        document.getElementById('loadingIndicator').classList.add('active');
+        
+        // Remove old satellite layer
+        if (currentLayer) {
+            map.removeLayer(currentLayer);
+        }
+        
+        // Create new NASA GIBS layer with selected date
+        const tileUrl = getNASAGIBSUrl(selectedLayer, selectedDate);
+        
+        currentLayer = L.tileLayer(tileUrl, {
+            attribution: 'NASA GIBS / Worldview',
+            maxZoom: 9,
+            opacity: opacity,
+            tileSize: 256
+        });
+        
+        currentLayer.addTo(map);
+        
+        // Update date display
+        const dateObj = new Date(selectedDate);
+        const displayDate = dateObj.toLocaleDateString('en-US', {
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric'
+        });
+        document.getElementById('currentDateDisplay').textContent = 'Viewing: ' + displayDate;
+        
+        // Visual feedback
+        const display = document.getElementById('currentDateDisplay');
+        display.style.transform = 'scale(1.05)';
+        setTimeout(function() {
+            display.style.transform = 'scale(1)';
+        }, 200);
+        
+        // Hide loading after tiles start loading
+        setTimeout(function() {
+            document.getElementById('loadingIndicator').classList.remove('active');
+        }, 1500);
+    }
+
+    // Update opacity
+    function updateOpacity() {
+        const opacity = document.getElementById('opacitySlider').value;
+        document.getElementById('opacityValue').textContent = opacity + '%';
+        
+        if (currentLayer) {
+            currentLayer.setOpacity(opacity / 100);
+        }
+    }
+
+    // Search location
+    function searchLocation() {
+        const query = document.getElementById('searchInput').value;
+        if (!query) {
+            alert('Please enter a location');
+            return;
+        }
+
+        fetch('https://nominatim.openstreetmap.org/search?format=json&q=' + encodeURIComponent(query))
+            .then(function(response) {
+                return response.json();
+            })
+            .then(function(data) {
+                if (data && data.length > 0) {
+                    const lat = parseFloat(data[0].lat);
+                    const lon = parseFloat(data[0].lon);
+                    map.setView([lat, lon], 5);
+                    
+                    L.marker([lat, lon]).addTo(map)
+                        .bindPopup(data[0].display_name)
+                        .openPopup();
+                } else {
+                    alert('Location not found');
+                }
+            })
+            .catch(function(error) {
+                console.error('Search error:', error);
+                alert('Error searching location');
+            });
+    }
+
+    // Event listeners
+    document.addEventListener('DOMContentLoaded', function() {
+        initMap();
+        
+        // Auto-update when date changes
+        document.getElementById('dateSelector').addEventListener('change', function() {
+            updateImagery();
+        });
+        
+        // Auto-update when layer changes
+        document.getElementById('layerSelector').addEventListener('change', function() {
+            updateImagery();
+        });
+        
+        // Year slider
+        document.getElementById('yearSlider').addEventListener('input', function(e) {
+            const year = e.target.value;
+            document.getElementById('yearValue').textContent = year;
+            
+            // Update date selector to January 1st of selected year
+            const newDate = year + '-01-01';
+            document.getElementById('dateSelector').value = newDate;
+            
+            // Trigger imagery update
+            updateImagery();
+        });
+        
+        // Opacity slider with real-time update
+        document.getElementById('opacitySlider').addEventListener('input', updateOpacity);
+        
+        // Search functionality
+        document.getElementById('searchBtn').addEventListener('click', searchLocation);
+        
+        document.getElementById('searchInput').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                searchLocation();
+            }
+        });
+    });
+</script>
+```
+
 </body>
 </html>
