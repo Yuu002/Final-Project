@@ -1,1 +1,23 @@
-https://ee-thitisorn2210.projects.earthengine.app/view/agb
+import ee
+ee.Initialize(project='ชื่อโปรเจกต์ของคุณ')
+
+# จุดที่สนใจ (ตัวอย่าง: lat, lon ที่ จ.พะเยา)
+point = ee.Geometry.Point([100.1, 19.2])
+
+# ดึง Sentinel-2 SR Harmonized (surface reflectance)
+collection = (ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
+              .filterBounds(point)
+              .filterDate("2025-09-01", "2025-09-30")  # กำหนดช่วงเวลา
+              .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 10)))  # เลือกภาพที่เมฆน้อยกว่า 10%
+
+# เอาภาพแรกใน collection
+image = collection.first()
+
+# ดึงค่า band (เช่น B4 = red, B8 = nir) ที่ตำแหน่ง point
+bands = image.reduceRegion(
+    reducer=ee.Reducer.first(),
+    geometry=point,
+    scale=10
+)
+
+print(bands.getInfo())
