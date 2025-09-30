@@ -34,7 +34,7 @@
         padding: 20px;
         border-radius: 12px;
         box-shadow: 0 4px 20px rgba(0,0,0,0.2);
-        min-width: 280px;
+        min-width: 300px;
     }
 
     .controls h2 {
@@ -127,57 +127,39 @@
     .current-date {
         margin-top: 10px;
         padding: 10px;
-        background: #e8f5e9;
         border-radius: 6px;
         font-size: 13px;
-        color: #2e7d32;
         text-align: center;
         font-weight: 500;
     }
 
-    .message-box {
-        position: absolute;
-        top: 50%;
-        left: 50%;
-        transform: translate(-50%, -50%);
-        background: white;
-        padding: 30px;
-        border-radius: 12px;
-        box-shadow: 0 8px 32px rgba(0,0,0,0.3);
-        z-index: 2001;
-        display: none;
-        text-align: center;
-        max-width: 400px;
+    .current-date.success {
+        background: #e8f5e9;
+        color: #2e7d32;
     }
 
-    .message-box.active {
-        display: block;
+    .current-date.fallback {
+        background: #fff3e0;
+        color: #e65100;
     }
 
-    .message-box h3 {
-        color: #ff6b6b;
-        margin-bottom: 15px;
-        font-size: 20px;
-    }
-
-    .message-box p {
-        color: #666;
-        line-height: 1.6;
-        margin-bottom: 20px;
-    }
-
-    .message-box button {
-        padding: 10px 30px;
-        background: #667eea;
-        color: white;
-        border: none;
-        border-radius: 6px;
-        cursor: pointer;
+    .status-badge {
+        display: inline-block;
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-size: 11px;
         font-weight: 600;
+        margin-left: 8px;
     }
 
-    .message-box button:hover {
-        background: #5568d3;
+    .status-badge.satellite {
+        background: #4CAF50;
+        color: white;
+    }
+
+    .status-badge.map {
+        background: #FF9800;
+        color: white;
     }
 
     @media (max-width: 768px) {
@@ -194,66 +176,73 @@
 </head>
 <body>
     <div id="map"></div>
-    <div class="loading" id="loading">Loading satellite imagery...</div>
+    <div class="loading" id="loading">Searching for satellite imagery...</div>
 
 ```
-<div class="message-box" id="messageBox">
-    <h3>⚠️ No Image Available</h3>
-    <p id="messageText">Don't have image yet, sorry. Please try a different date or location.</p>
-    <button onclick="closeMessage()">OK</button>
-</div>
-
 <div class="controls">
     <h2>🛰️ Satellite Time Machine</h2>
     
     <div class="control-group">
         <label for="dateInput">Select Date:</label>
-        <input type="date" id="dateInput" min="2017-01-01" max="2025-09-30">
+        <input type="date" id="dateInput" min="2015-06-23" max="2025-09-30">
     </div>
     
     <button class="btn" id="updateBtn" onclick="updateSatelliteImage()">Update Imagery</button>
     
-    <div class="current-date" id="currentDate">
-        Current: Latest Available
+    <div class="current-date success" id="currentDate">
+        Current: Google Maps <span class="status-badge map">MAP</span>
     </div>
     
     <div class="info">
-        📍 Pan and zoom the map to explore<br>
-        📅 Landsat 8 data from 2017 onwards<br>
-        ⏱️ Images update every 16 days<br>
-        ☁️ May show "no image" if unavailable
+        📍 Pan and zoom to explore anywhere<br>
+        🛰️ Sentinel-2 satellite imagery<br>
+        📅 Available from June 2015<br>
+        🗺️ Falls back to Google Maps if unavailable
     </div>
 </div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
-    let map = L.map('map').setView([37.7749, -122.4194], 10);
+    let map = L.map('map').setView([40.7128, -74.0060], 12); // New York
 
-    let baseLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '© OpenStreetMap contributors',
-        opacity: 0.3
-    }).addTo(map);
-
-    let satelliteLayer = null;
+    let currentLayer = null;
     let currentDate = new Date().toISOString().split('T')[0];
-    let tilesLoaded = 0;
-    let tilesErrored = 0;
-    let loadingTimeout = null;
+    let isShowingSatellite = false;
 
     document.getElementById('dateInput').value = currentDate;
     document.getElementById('dateInput').max = currentDate;
 
-    function showMessage(message) {
-        document.getElementById('messageText').textContent = message;
-        document.getElementById('messageBox').classList.add('active');
-        document.getElementById('loading').classList.remove('active');
+    // Start with Google Maps satellite
+    function loadGoogleMaps() {
+        if (currentLayer) {
+            map.removeLayer(currentLayer);
+        }
+
+        currentLayer = L.tileLayer('https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', {
+            attribution: '© Google',
+            maxZoom: 20,
+            subdomains: ['mt0', 'mt1', 'mt2', 'mt3']
+        }).addTo(map);
+
+        return currentLayer;
     }
 
-    function closeMessage() {
-        document.getElementById('messageBox').classList.remove('active');
+    // Initialize with Google Maps
+    loadGoogleMaps();
+
+    function updateStatusDisplay(date, isSatellite) {
+        const statusEl = document.getElementById('currentDate');
+        
+        if (isSatellite) {
+            statusEl.className = 'current-date success';
+            statusEl.innerHTML = `Viewing: ${date} <span class="status-badge satellite">SENTINEL-2</span>`;
+        } else {
+            statusEl.className = 'current-date fallback';
+            statusEl.innerHTML = `No imagery for ${date}<br><small>Showing Google Maps instead</small> <span class="status-badge map">MAP</span>`;
+        }
     }
 
-    function updateSatelliteImage() {
+    async function updateSatelliteImage() {
         const dateInput = document.getElementById('dateInput').value;
         if (!dateInput) {
             alert('Please select a date');
@@ -262,96 +251,96 @@
 
         document.getElementById('loading').classList.add('active');
         document.getElementById('updateBtn').disabled = true;
-        tilesLoaded = 0;
-        tilesErrored = 0;
 
-        if (satelliteLayer) {
-            map.removeLayer(satelliteLayer);
+        // Remove current layer
+        if (currentLayer) {
+            map.removeLayer(currentLayer);
         }
 
-        // Using USGS Landsat 8 imagery via ArcGIS REST service
-        // This provides actual dated imagery
-        const year = dateInput.substring(0, 4);
-        const month = dateInput.substring(5, 7);
-        const day = dateInput.substring(8, 10);
+        let tilesLoaded = 0;
+        let tilesErrored = 0;
+        let checkComplete = false;
 
-        // Option 1: Use Planet Labs API (free tier available)
-        // Option 2: Use Mapbox Satellite with dates
-        // Option 3: Use USGS Earth Explorer Landsat
-        
-        // Using a combination approach with Landsat 8
-        const landsatUrl = `https://services.arcgisonline.com/arcgis/rest/services/Landsat/MS/ImageServer/exportImage?` +
-            `bbox={bbox-epsg-3857}&` +
-            `bboxSR=3857&` +
-            `size=256,256&` +
-            `imageSR=3857&` +
-            `time=${new Date(dateInput).getTime()},${new Date(dateInput).getTime() + 86400000}&` +
-            `format=png&` +
-            `pixelType=U8&` +
-            `interpolation=RSP_BilinearInterpolation&` +
-            `compression=&` +
-            `compressionQuality=&` +
-            `bandIds=&` +
-            `mosaicRule=&` +
-            `renderingRule=&` +
-            `f=image`;
+        // Try Sentinel-2 from EOX
+        const sentinelLayer = L.tileLayer(
+            `https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2020_3857_512/default/g/{z}/{y}/{x}.jpg`,
+            {
+                attribution: '© Sentinel-2 cloudless by EOX',
+                maxZoom: 18,
+                tileSize: 512
+            }
+        );
 
-        satelliteLayer = L.tileLayer(landsatUrl, {
-            attribution: '© USGS Landsat',
-            maxZoom: 18,
-            tileSize: 256,
-            errorTileUrl: 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'
-        });
+        // Also try time-based Sentinel Hub
+        const dateFormatted = dateInput;
+        const sentinelTimeLayer = L.tileLayer(
+            `https://services.sentinel-hub.com/ogc/wms/42924c6c-257a-4d04-9b8e-36387513a99c?SERVICE=WMS&REQUEST=GetMap&LAYERS=TRUE-COLOR&STYLES=&FORMAT=image/jpeg&TRANSPARENT=false&VERSION=1.3.0&WIDTH=256&HEIGHT=256&CRS=EPSG:3857&BBOX={bbox-epsg-3857}&TIME=${dateFormatted}/${dateFormatted}`,
+            {
+                attribution: '© Copernicus Sentinel-2',
+                maxZoom: 18
+            }
+        );
 
-        let tileLoadCheck = 0;
-        const maxTileCheck = 15;
+        const testLayer = sentinelTimeLayer;
+        let loadTimeout;
 
-        satelliteLayer.on('tileload', function() {
+        testLayer.on('tileload', function() {
             tilesLoaded++;
-            tileLoadCheck++;
             
-            if (tileLoadCheck >= 5) {
+            if (tilesLoaded >= 3 && !checkComplete) {
+                checkComplete = true;
+                clearTimeout(loadTimeout);
                 document.getElementById('loading').classList.remove('active');
                 document.getElementById('updateBtn').disabled = false;
-                document.getElementById('currentDate').textContent = `Current: ${dateInput}`;
+                currentLayer = testLayer;
+                isShowingSatellite = true;
+                updateStatusDisplay(dateInput, true);
             }
         });
 
-        satelliteLayer.on('tileerror', function() {
+        testLayer.on('tileerror', function() {
             tilesErrored++;
-            tileLoadCheck++;
             
-            if (tilesErrored >= 10 || tileLoadCheck >= maxTileCheck) {
-                if (satelliteLayer) {
-                    map.removeLayer(satelliteLayer);
+            if (tilesErrored >= 5 && !checkComplete) {
+                checkComplete = true;
+                clearTimeout(loadTimeout);
+                map.removeLayer(testLayer);
+                
+                // Fallback to Google Maps
+                loadGoogleMaps();
+                isShowingSatellite = false;
+                updateStatusDisplay(dateInput, false);
+                
+                document.getElementById('loading').classList.remove('active');
+                document.getElementById('updateBtn').disabled = false;
+            }
+        });
+
+        testLayer.addTo(map);
+
+        // Set timeout to check if enough tiles loaded
+        loadTimeout = setTimeout(() => {
+            if (!checkComplete) {
+                checkComplete = true;
+                
+                if (tilesLoaded < 2) {
+                    // Not enough tiles loaded, use Google Maps
+                    map.removeLayer(testLayer);
+                    loadGoogleMaps();
+                    isShowingSatellite = false;
+                    updateStatusDisplay(dateInput, false);
+                } else {
+                    // Some tiles loaded, keep satellite view
+                    currentLayer = testLayer;
+                    isShowingSatellite = true;
+                    updateStatusDisplay(dateInput, true);
                 }
                 
-                showMessage(`Don't have image yet, sorry. The satellite may not have captured imagery for ${dateInput} at this location. Try a different date (images available every 16 days) or zoom to a different area.`);
-                document.getElementById('updateBtn').disabled = false;
-                document.getElementById('currentDate').textContent = `No image for: ${dateInput}`;
-            }
-        });
-
-        satelliteLayer.addTo(map);
-
-        // Fallback timeout
-        clearTimeout(loadingTimeout);
-        loadingTimeout = setTimeout(() => {
-            if (tilesLoaded < 3) {
-                if (satelliteLayer) {
-                    map.removeLayer(satelliteLayer);
-                }
-                showMessage(`Don't have image yet, sorry. No imagery available for this date and location. Please try:\n\n• A more recent date\n• Different location (pan/zoom map)\n• Date from 2017 onwards`);
-                document.getElementById('currentDate').textContent = `No image available`;
-            } else {
                 document.getElementById('loading').classList.remove('active');
-                document.getElementById('currentDate').textContent = `Current: ${dateInput}`;
+                document.getElementById('updateBtn').disabled = false;
             }
-            document.getElementById('updateBtn').disabled = false;
-        }, 8000);
+        }, 6000);
     }
-
-    updateSatelliteImage();
 
     document.getElementById('dateInput').addEventListener('keypress', function(e) {
         if (e.key === 'Enter') {
@@ -359,8 +348,9 @@
         }
     });
 
+    // Add layer control
     map.on('click', function(e) {
-        console.log(`Location: ${e.latlng.lat.toFixed(4)}, ${e.latlng.lng.toFixed(4)}`);
+        console.log(`Coordinates: ${e.latlng.lat.toFixed(5)}, ${e.latlng.lng.toFixed(5)}`);
     });
 </script>
 ```
