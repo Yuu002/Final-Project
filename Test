@@ -1,1 +1,274 @@
-{'AOT': 84, 'B1': 222, 'B11': 1293, 'B12': 570, 'B2': 284, 'B3': 347, 'B4': 187, 'B5': 496, 'B6': 1541, 'B7': 1952, 'B8': 1669, 'B8A': 2090, 'B9': 2293, 'MSK_CLASSI_CIRRUS': None, 'MSK_CLASSI_OPAQUE': None, 'MSK_CLASSI_SNOW_ICE': None, 'MSK_CLDPRB': 0, 'MSK_SNWPRB': 0, 'QA10': 0, 'QA20': 0, 'QA60': 0, 'SCL': 4, 'TCI_B': 29, 'TCI_G': 36, 'TCI_R': 19, 'WVP': 1401}
+from flask import Flask, request, jsonify, render_template
+from flask_cors import CORS
+import ee
+import json
+import datetime
+
+# ---- กรณียังไม่ authenticate ให้ทำ ee.Authenticate() ด้วยตนเองก่อนรัน
+# ตัวอย่าง (ทำครั้งเดียวที่เครื่อง/VM ก่อน):
+# >>> import ee
+# >>> ee.Authenticate()
+# >>> ee.Initialize()
+
+# จากนั้นรันแอปนี้
+try:
+    ee.Initialize()  # ถ้า token อยู่แล้วจะ initialize ได้
+except Exception as e:
+    print("ee.Initialize failed. หากยังไม่ authenticate ให้รัน ee.Authenticate() ก่อนตามคำแนะนำของ GEE.")
+    raise
+
+app = Flask(__name__, template_folder="templates")
+CORS(app)
+
+# ช่วยหา image (first/closest) ในช่วงวันที่และพื้นที่
+def get_s2_image(start_date, end_date, geometry):
+    coll = (ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
+            .filterBounds(geometry)
+            .filterDate(start_date, end_date)
+            .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 30)))
+    size = coll.size().getInfo()
+    if size == 0:
+        return None
+    # เอาภาพที่เวลาเริ่มสุด (ใกล้ที่สุดตาม sort)
+    image = coll.sort("system:time_start").first()
+    return image
+
+@app.route("/")
+def index():
+    return render_template("index.html")
+
+@app.route("/get_map", methods=["POST"])
+def get_map():
+    data = request.get_json()
+    start = data.get("start")
+    end = data.get("end")
+    # optional geometry bbox to ensure filterBounds works; otherwise use entire world
+    geom = data.get("geometry")
+    if geom:
+        geometry = ee.Geometry(geom)
+    else:
+        # small default geometry (point somewhere) to allow filterBounds
+        geometry = ee.Geometry.Point([100.1, 19.2])
+
+    # validate dates
+    try:
+        # ensure format YYYY-MM-DD
+        sd = datetime.datetime.strptime(start, "%Y-%m-%d")
+        ed = datetime.datetime.strptime(end, "%Y-%m-%d")
+    except Exception as e:
+        return jsonify({"error": "Invalid date format. Use YYYY-MM-DD"}), 400
+
+    image = get_s2_image(start, end, geometry)
+    if image is None:
+        return jsonify({"error": "No image found in that date range / area."}), 404
+
+    # create RGB visualization (stretch according to SR typical range)
+    vis = {"bands": ["B4", "B3", "B2"], "min": 0, "max": 3000}
+    try:
+        mapid = image.getMapId(vis)
+        tile_url = mapid["tile_fetcher"].url_format
+    except Exception as e:
+        return jsonify({"error": f"Failed to get tile URL: {str(e)}"}), 500
+
+    # also return system:time_start for user info
+    try:
+        ts = image.get("system:time_start").getInfo()
+    except:
+        ts = None
+
+    return jsonify({"tile_url": tile_url, "timestamp": ts})
+
+@app.route("/get_values", methods=["POST"])
+def get_values():
+    data = request.get_json()
+    start = data.get("start")
+    end = data.get("end")
+    geom = data.get("geometry")
+    if not geom:
+        return jsonify({"error": "geometry required"}), 400
+    try:
+        geometry = ee.Geometry(geom)
+    except Exception as e:
+        return jsonify({"error": f"invalid geometry: {str(e)}"}), 400
+
+    image = get_s2_image(start, end, geometry)
+    if image is None:
+        return jsonify({"error": "No image found in that date range / area."}), 404
+
+    # compute mean red (B4), nir (B8), ndvi
+    red = image.select("B4")
+    nir = image.select("B8")
+    ndvi = nir.subtract(red).divide(nir.add(red)).rename("NDVI")
+
+    combined = image.addBands([ndvi])
+
+    try:
+        stats = combined.reduceRegion(
+            reducer=ee.Reducer.mean(),
+            geometry=geometry,
+            scale=10,
+            maxPixels=1e9
+        ).getInfo()
+    except Exception as e:
+        return jsonify({"error": f"reduceRegion failed: {str(e)}"}), 500
+
+    # pick out values, might be None if masked
+    b4 = stats.get("B4")
+    b8 = stats.get("B8")
+    ndvi_val = stats.get("NDVI")
+
+    return jsonify({"B4_mean": b4, "B8_mean": b8, "NDVI_mean": ndvi_val, "raw_stats": stats})
+
+if __name__ == "__main__":
+    # run on localhost:5000
+    app.run(debug=True, host="0.0.0.0", port=5000)
+--
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Sentinel-2 Viewer + Extract Bands (GEE)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <!-- Leaflet -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <!-- Leaflet Draw -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css"/>
+  <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
+
+  <style>
+    body { margin:0; padding:0; font-family: Arial, sans-serif; }
+    #map { width:100%; height:80vh; }
+    #controls { padding:10px; background:#fff; }
+    .btn { padding:6px 10px; margin-right:6px; cursor:pointer; }
+    #result { margin-top:8px; }
+  </style>
+</head>
+<body>
+  <div id="controls">
+    Start: <input type="date" id="start" value="2019-01-01">
+    End: <input type="date" id="end" value="2019-01-05">
+    <button id="load" class="btn">Load Image</button>
+    <button id="get_values" class="btn">Get Bands for Selected Geometry</button>
+    <span id="status"></span>
+    <div id="result"></div>
+  </div>
+
+  <div id="map"></div>
+
+<script>
+let map = L.map('map').setView([19.2, 100.1], 12);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'OSM'}).addTo(map);
+
+let drawnItems = new L.FeatureGroup();
+map.addLayer(drawnItems);
+
+let drawControl = new L.Control.Draw({
+  edit: {
+    featureGroup: drawnItems
+  },
+  draw: {
+    polygon: true,
+    rectangle: true,
+    marker: true,
+    circle: false,
+    polyline: false
+  }
+});
+map.addControl(drawControl);
+
+map.on(L.Draw.Event.CREATED, function (e) {
+  drawnItems.clearLayers(); // only keep one
+  let layer = e.layer;
+  drawnItems.addLayer(layer);
+});
+
+// helper to show status
+function setStatus(s) {
+  document.getElementById('status').innerText = s;
+}
+
+let geeTile; // layer reference
+
+document.getElementById('load').addEventListener('click', async () => {
+  const start = document.getElementById('start').value;
+  const end = document.getElementById('end').value;
+  setStatus('Loading image...');
+
+  // send (optional) geometry bbox to help server filter (we'll send map bbox)
+  const bbox = map.getBounds().toBBoxString().split(',').map(Number);
+  const bboxGeom = {
+    "type": "Polygon",
+    "coordinates": [[
+      [bbox[1], bbox[0]],
+      [bbox[3], bbox[0]],
+      [bbox[3], bbox[2]],
+      [bbox[1], bbox[2]],
+      [bbox[1], bbox[0]]
+    ]]
+  };
+
+  try {
+    const resp = await fetch('/get_map', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({start, end, geometry: bboxGeom})
+    });
+    const j = await resp.json();
+    if (!resp.ok) {
+      setStatus('Error: ' + (j.error || resp.statusText));
+      return;
+    }
+    const tileUrl = j.tile_url;
+    // remove old layer
+    if (geeTile) map.removeLayer(geeTile);
+    geeTile = L.tileLayer(tileUrl, {opacity:0.9, maxZoom:18});
+    geeTile.addTo(map);
+    setStatus('Image loaded. Timestamp:' + (j.timestamp ? new Date(j.timestamp*1).toISOString() : 'unknown'));
+  } catch (err) {
+    setStatus('Fetch error: ' + err);
+  }
+});
+
+// เมื่อ user กด Get Bands
+document.getElementById('get_values').addEventListener('click', async () => {
+  const start = document.getElementById('start').value;
+  const end = document.getElementById('end').value;
+  setStatus('Getting values...');
+
+  if (drawnItems.getLayers().length === 0) {
+    setStatus('กรุณาวาด point หรือ polygon ในแผนที่ก่อน');
+    return;
+  }
+  // get geojson of the drawn layer (only first)
+  const layer = drawnItems.getLayers()[0];
+  const gj = layer.toGeoJSON().geometry;
+
+  try {
+    const resp = await fetch('/get_values', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({start, end, geometry: gj})
+    });
+    const j = await resp.json();
+    if (!resp.ok) {
+      setStatus('Error: ' + (j.error || resp.statusText));
+      return;
+    }
+    setStatus('Done');
+    document.getElementById('result').innerHTML = `
+      <b>Results:</b><br>
+      B4 (red) mean: ${j.B4_mean}<br>
+      B8 (NIR) mean: ${j.B8_mean}<br>
+      NDVI mean: ${j.NDVI_mean}<br>
+      <small>Raw: ${JSON.stringify(j.raw_stats)}</small>
+    `;
+  } catch (err) {
+    setStatus('Fetch error: ' + err);
+  }
+});
+</script>
+</body>
+</html>
