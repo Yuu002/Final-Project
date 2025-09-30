@@ -1,43 +1,157 @@
+from flask import Flask, render_template, request, jsonify
+import ee
+
+# -----------------------------
+# Initialize Earth Engine
+# -----------------------------
+ee.Initialize(project='map-web-473508')
+
+app = Flask(__name__)
+
+# -----------------------------
+# Cloud Mask Function
+# -----------------------------
 def mask_s2_clouds(image):
-  """Masks clouds in a Sentinel-2 image using the QA band.
+    qa = image.select('QA60')
+    cloud_bit_mask = 1 << 10
+    cirrus_bit_mask = 1 << 11
+    mask = (
+        qa.bitwiseAnd(cloud_bit_mask).eq(0)
+        .And(qa.bitwiseAnd(cirrus_bit_mask).eq(0))
+    )
+    return image.updateMask(mask).divide(10000)
 
-  Args:
-      image (ee.Image): A Sentinel-2 image.
+# -----------------------------
+# Index route (เลือกช่วงเวลา)
+# -----------------------------
+@app.route('/')
+def index():
+    return render_template('index.html')
 
-  Returns:
-      ee.Image: A cloud-masked Sentinel-2 image.
-  """
-  qa = image.select('QA60')
+# -----------------------------
+# Endpoint ดึงแผนที่ Sentinel-2
+# -----------------------------
+@app.route('/get_map', methods=['POST'])
+def get_map():
+    start = request.json['start']
+    end = request.json['end']
 
-  # Bits 10 and 11 are clouds and cirrus, respectively.
-  cloud_bit_mask = 1 << 10
-  cirrus_bit_mask = 1 << 11
+    # โหลด Sentinel-2 SR
+    collection = (
+        ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
+        .filterDate(start, end)
+        .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
+        .map(mask_s2_clouds)
+    )
 
-  # Both flags should be set to zero, indicating clear conditions.
-  mask = (
-      qa.bitwiseAnd(cloud_bit_mask)
-      .eq(0)
-      .And(qa.bitwiseAnd(cirrus_bit_mask).eq(0))
-  )
+    # ใช้ค่าเฉลี่ยเพื่อให้ได้ ee.Image
+    image = collection.mean()
 
-  return image.updateMask(mask).divide(10000)
+    vis_params = {
+        'min': 0.0,
+        'max': 0.3,
+        'bands': ['B4', 'B3', 'B2'],
+    }
 
+    map_id_dict = ee.Image(image).getMapId(vis_params)
+    tile_url = map_id_dict['tile_fetcher'].url_format
 
-dataset = (
-    ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
-    .filterDate('2020-01-01', '2020-01-30')
-    # Pre-filter to get less cloudy granules.
-    .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
-    .map(mask_s2_clouds)
-)
+    return jsonify({'tile_url': tile_url})
 
-visualization = {
-    'min': 0.0,
-    'max': 0.3,
-    'bands': ['B4', 'B3', 'B2'],
-}
+# -----------------------------
+# Endpoint ดึงค่า pixel
+# -----------------------------
+@app.route('/get_pixel', methods=['POST'])
+def get_pixel():
+    lat = float(request.json['lat'])
+    lon = float(request.json['lon'])
+    start = request.json['start']
+    end = request.json['end']
 
-m = geemap.Map()
-m.set_center(83.277, 17.7009, 12)
-m.add_layer(dataset.mean(), visualization, 'RGB')
-m
+    point = ee.Geometry.Point([lon, lat])
+
+    collection = (
+        ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
+        .filterDate(start, end)
+        .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
+        .map(mask_s2_clouds)
+    )
+
+    image = collection.mean()
+
+    bands = image.reduceRegion(
+        reducer=ee.Reducer.first(),
+        geometry=point,
+        scale=10
+    )
+
+    return jsonify(bands.getInfo())
+
+# -----------------------------
+# Run Flask
+# -----------------------------
+if __name__ == '__main__':
+    app.run(debug=True)
+--
+
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Sentinel-2 Viewer</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+</head>
+<body>
+  <h3>Sentinel-2 Viewer</h3>
+  <form id="dateForm">
+    Start: <input type="date" id="start" name="start" value="2020-01-01">
+    End: <input type="date" id="end" name="end" value="2020-01-15">
+    <button type="submit">Load Map</button>
+  </form>
+
+  <div id="map" style="height: 600px;"></div>
+  <p id="pixelValue">Click on map to get pixel value</p>
+
+  <script>
+    var map = L.map('map').setView([19.2, 100.1], 10);
+
+    document.getElementById('dateForm').onsubmit = async function(e) {
+      e.preventDefault();
+      let start = document.getElementById('start').value;
+      let end = document.getElementById('end').value;
+
+      let response = await fetch('/get_map', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({start, end})
+      });
+      let data = await response.json();
+
+      if (window.s2layer) {
+        map.removeLayer(window.s2layer);
+      }
+
+      window.s2layer = L.tileLayer(data.tile_url, {attribution: "Sentinel-2"}).addTo(map);
+    };
+
+    map.on('click', async function(e) {
+      let start = document.getElementById('start').value;
+      let end = document.getElementById('end').value;
+
+      let response = await fetch('/get_pixel', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          lat: e.latlng.lat,
+          lon: e.latlng.lng,
+          start, end
+        })
+      });
+
+      let data = await response.json();
+      document.getElementById('pixelValue').innerText = JSON.stringify(data);
+    });
+  </script>
+</body>
+</html>
