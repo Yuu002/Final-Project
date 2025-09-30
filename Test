@@ -1,3 +1,10 @@
+import ee
+ee.Initialize()
+
+# ทดสอบดึงข้อมูล
+img = ee.Image('COPERNICUS/S2/20190101T000239_20190101T000239_T56PFR')
+print(img.getInfo())
+
 from flask import Flask, request, jsonify, render_template
 from flask_cors import CORS
 import ee
@@ -272,3 +279,4 @@ document.getElementById('get_values').addEventListener('click', async () => {
 </script>
 </body>
 </html>
+
