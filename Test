@@ -7,7 +7,7 @@ ee.Initialize(project='map-web-473508')
 app = Flask(__name__)
 
 # -----------------------------
-# Cloud Mask Function (Sentinel-2 → DN 10-bit)
+# Cloud Mask Function (Sentinel-2 → DN → Rescale ใกล้ THEOS-1)
 # -----------------------------
 def mask_s2_clouds(image):
     qa = image.select('QA60')
@@ -16,10 +16,16 @@ def mask_s2_clouds(image):
     mask = qa.bitwiseAnd(cloud_bit_mask).eq(0) \
            .And(qa.bitwiseAnd(cirrus_bit_mask).eq(0))
     
-    # scale: reflectance(0-1) → DN(0–1023)
+    # step 1: reflectance (0–10000) → DN (0–1023)
     dn_image = image.multiply(1023).divide(10000).toUint16()
-    
-    return dn_image.updateMask(mask)
+
+    # step 2: linear rescale เพื่อใกล้กับ THEOS DN
+    blue  = dn_image.select('B2').multiply(0.005).add(50)   # target ~48–55
+    green = dn_image.select('B3').multiply(0.005).add(55)   # target ~55–60 (ประมาณ)
+    red   = dn_image.select('B4').multiply(0.004).add(65)   # target ~64–67
+    nir   = dn_image.select('B8').multiply(0.003).add(60)   # target ~58–62
+
+    return blue.addBands([green, red, nir]).updateMask(mask)
 
 # -----------------------------
 # Route index.html
@@ -29,7 +35,7 @@ def index():
     return render_template('index.html')
 
 # -----------------------------
-# Endpoint ดึงแผนที่ Sentinel-2 → DN
+# Endpoint ดึงแผนที่ Sentinel-2 → DN (rescaled)
 # -----------------------------
 @app.route('/get_map', methods=['POST'])
 def get_map():
@@ -45,8 +51,8 @@ def get_map():
 
     vis_params = {
         'bands': ['B4', 'B3', 'B2'],  # Red, Green, Blue
-        'min': 0,
-        'max': 1023,   # THEOS-1 DN range
+        'min': 40,
+        'max': 70,   # เพราะเรา rescale ให้ค่าช่วงนี้
         'gamma': 1.0
     }
 
@@ -56,7 +62,7 @@ def get_map():
     return jsonify({'tile_url': tile_url})
 
 # -----------------------------
-# Endpoint ดึงค่า pixel (DN)
+# Endpoint ดึงค่า pixel (DN rescaled)
 # -----------------------------
 @app.route('/get_pixel', methods=['POST'])
 def get_pixel():
@@ -72,7 +78,7 @@ def get_pixel():
                   .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
                   .map(mask_s2_clouds))
 
-    image = collection.mean()  # pixel ตอนนี้เป็น DN (0–1023)
+    image = collection.mean()  # pixel ตอนนี้เป็น DN rescaled (40–70)
 
     bands = image.reduceRegion(
         reducer=ee.Reducer.first(),
