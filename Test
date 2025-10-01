@@ -1,3 +1,91 @@
+#app.py
+from flask import Flask, render_template, request, jsonify
+import ee
+
+# Initialize Earth Engine
+ee.Initialize(project='map-web-473508')
+
+app = Flask(__name__)
+
+# -----------------------------
+# Cloud Mask Function
+# -----------------------------
+def mask_s2_clouds(image):
+    qa = image.select('QA60')
+    cloud_bit_mask = 1 << 10
+    cirrus_bit_mask = 1 << 11
+    mask = qa.bitwiseAnd(cloud_bit_mask).eq(0) \
+           .And(qa.bitwiseAnd(cirrus_bit_mask).eq(0))
+    return image.updateMask(mask).divide(10000)  # convert to reflectance
+
+# -----------------------------
+# Route index.html
+# -----------------------------
+@app.route('/')
+def index():
+    return render_template('index.html')
+
+# -----------------------------
+# Endpoint ดึงแผนที่ Sentinel-2
+# -----------------------------
+@app.route('/get_map', methods=['POST'])
+def get_map():
+    start = request.json['start']
+    end = request.json['end']
+
+    collection = (ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
+                  .filterDate(start, end)
+                  .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
+                  .map(mask_s2_clouds))
+
+    image = collection.mean()
+
+    vis_params = {
+        'bands': ['B4', 'B3', 'B2'],
+        'min': 0.0,
+        'max': 0.3,
+        'gamma': 1.4   # เพิ่ม gamma ให้สีคมชัดขึ้น
+    }
+
+    map_id_dict = ee.Image(image).getMapId(vis_params)
+    tile_url = map_id_dict['tile_fetcher'].url_format
+
+    return jsonify({'tile_url': tile_url})
+
+# -----------------------------
+# Endpoint ดึงค่า pixel
+# -----------------------------
+@app.route('/get_pixel', methods=['POST'])
+def get_pixel():
+    lat = float(request.json['lat'])
+    lon = float(request.json['lon'])
+    start = request.json['start']
+    end = request.json['end']
+
+    point = ee.Geometry.Point([lon, lat])
+
+    collection = (ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
+                  .filterDate(start, end)
+                  .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
+                  .map(mask_s2_clouds))
+
+    image = collection.mean()  # pixel output ก็ divide 10000 แล้ว
+
+    bands = image.reduceRegion(
+        reducer=ee.Reducer.first(),
+        geometry=point,
+        scale=10
+    )
+
+    return jsonify(bands.getInfo())
+
+# -----------------------------
+if __name__ == '__main__':
+    app.run(debug=True)
+
+--
+
+# templates/index.html
 <!DOCTYPE html>
 <html>
 <head>
@@ -119,3 +207,4 @@
   </script>
 </body>
 </html>
+
