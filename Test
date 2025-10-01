@@ -65,8 +65,8 @@
       let data = await resp.json();
 
       if(s2layer) map.removeLayer(s2layer);
-      s2layer = L.tileLayer(data.tile_url).addTo(map); 
-      s2layer.bringToFront(); // บังคับให้อยู่บนสุด
+      s2layer = L.tileLayer(data.tile_url).addTo(map);
+      s2layer.bringToFront(); // บังคับให้ภาพ Sentinel-2 อยู่บนสุด
     };
 
     // --- Get Pixel Button ---
