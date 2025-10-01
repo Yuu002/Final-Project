@@ -68,7 +68,12 @@
       "OpenStreetMap": osm,
       "MapTiler Hybrid": maptilerHybrid
     };
-    L.control.layers(baseMaps, null, {collapsed: false}).addTo(map);
+
+    // --- Overlay layers (เริ่มต้นว่าง) ---
+    var overlayMaps = {};
+
+    // --- Add layer control ---
+    var layerControl = L.control.layers(baseMaps, overlayMaps, {collapsed: false}).addTo(map);
 
     var s2layer; // Sentinel-2 overlay
     var marker;  // เก็บ marker ล่าสุด
@@ -85,11 +90,18 @@
       });
       let data = await resp.json();
 
-      if(s2layer) map.removeLayer(s2layer);
-      s2layer = L.tileLayer(data.tile_url).addTo(map);
-      s2layer.bringToFront();
-    };
+      if(s2layer) {
+        map.removeLayer(s2layer);
+        layerControl.removeLayer(s2layer); // เอาออกจาก control เดิม
+      }
 
+      s2layer = L.tileLayer(data.tile_url);
+      s2layer.addTo(map);
+      s2layer.bringToFront();
+
+      // เพิ่ม Sentinel-2 เข้าไปใน overlay control
+      layerControl.addOverlay(s2layer, "Sentinel-2");
+    };
     // --- Function: แสดง marker ---
     function showMarker(lat, lon) {
       if(marker) {
@@ -159,4 +171,5 @@
 </script>
 </body>
 </html>
+
 
