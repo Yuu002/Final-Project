@@ -1,61 +1,104 @@
-<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
-<script>
-  // --- Map initialization ---
-  // ไม่ใส่ tileLayer basemap ใด ๆ เลย
-  var map = L.map('map', {
-    center: [19.2, 100.1],
-    zoom: 10,
-    zoomControl: true,
-    attributionControl: false
-  });
-
-  var s2layer; // Sentinel-2 overlay
-
-  // --- Load Map Button ---
-  document.getElementById('loadMap').onclick = async function() {
-    let start = document.getElementById('start').value;
-    let end = document.getElementById('end').value;
-
-    let resp = await fetch('/get_map', {
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({start, end})
-    });
-    let data = await resp.json();
-
-    if(s2layer) map.removeLayer(s2layer);
-    s2layer = L.tileLayer(data.tile_url).addTo(map);
-    s2layer.bringToFront(); // บังคับให้ Sentinel-2 อยู่บนสุด
-  };
-
-  // --- Get Pixel Button ---
-  document.getElementById('getPixel').onclick = async function() {
-    let lat = parseFloat(document.getElementById('lat').value);
-    let lon = parseFloat(document.getElementById('lon').value);
-    let start = document.getElementById('start').value;
-    let end = document.getElementById('end').value;
-
-    if(isNaN(lat) || isNaN(lon)) {
-      alert("Please enter valid coordinates!");
-      return;
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Sentinel-2 Viewer</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
+  <style>
+    body { margin:0; padding:0; }
+    #map { height:100vh; width:75%; float:left; }
+    #sidebar {
+      width:25%; height:100vh; float:right; padding:15px; box-sizing:border-box;
+      background:#f7f7f7; overflow-y:auto; font-family:sans-serif;
     }
+    h3 { margin-top:0; }
+    label { display:block; margin-top:10px; font-weight:bold; }
+    input, button { width:90%; margin-top:5px; padding:5px; font-size:14px; }
+    hr { margin:15px 0; }
+    #pixelData p { margin:5px 0; }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <div id="sidebar">
+    <h3>Sentinel-2 Control</h3>
+    <label>Start Date:</label>
+    <input type="date" id="start" value="2020-01-01">
+    <label>End Date:</label>
+    <input type="date" id="end" value="2020-01-15">
+    <button id="loadMap">Load Map</button>
 
-    let resp = await fetch('/get_pixel', {
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({lat, lon, start, end})
+    <hr>
+
+    <h4>Pixel Info</h4>
+    <label>Latitude:</label>
+    <input type="number" id="lat" step="0.0001">
+    <label>Longitude:</label>
+    <input type="number" id="lon" step="0.0001">
+    <button id="getPixel">Get Pixel</button>
+
+    <div id="pixelData" style="margin-top:10px;">
+      <p><strong>Selected Point:</strong></p>
+      <p id="coord">Lat: -, Lon: -</p>
+      <p id="red">Red (B4): -</p>
+      <p id="nir">NIR (B8): -</p>
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+  <script>
+    // --- Map initialization ---
+    var map = L.map('map').setView([19.2, 100.1], 10);
+
+    var s2layer; // Sentinel-2 overlay
+
+    // --- Load Map Button ---
+    document.getElementById('loadMap').onclick = async function() {
+      let start = document.getElementById('start').value;
+      let end = document.getElementById('end').value;
+
+      let resp = await fetch('/get_map', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({start, end})
+      });
+      let data = await resp.json();
+
+      if(s2layer) map.removeLayer(s2layer);
+      s2layer = L.tileLayer(data.tile_url).addTo(map);
+      s2layer.bringToFront(); // บังคับให้ภาพ Sentinel-2 อยู่บนสุด
+    };
+
+    // --- Get Pixel Button ---
+    document.getElementById('getPixel').onclick = async function() {
+      let lat = parseFloat(document.getElementById('lat').value);
+      let lon = parseFloat(document.getElementById('lon').value);
+      let start = document.getElementById('start').value;
+      let end = document.getElementById('end').value;
+
+      if(isNaN(lat) || isNaN(lon)) {
+        alert("Please enter valid coordinates!");
+        return;
+      }
+
+      let resp = await fetch('/get_pixel', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({lat, lon, start, end})
+      });
+
+      let pixel = await resp.json();
+      document.getElementById('coord').innerText = `Lat: ${lat}, Lon: ${lon}`;
+      document.getElementById('red').innerText = `Red (B4): ${pixel['B4'] ?? '-'}`;
+      document.getElementById('nir').innerText = `NIR (B8): ${pixel['B8'] ?? '-'}`;
+    };
+
+    // --- Click on Map to get Pixel ---
+    map.on('click', async function(e){
+      document.getElementById('lat').value = e.latlng.lat.toFixed(6);
+      document.getElementById('lon').value = e.latlng.lng.toFixed(6);
+      document.getElementById('getPixel').click();
     });
-
-    let pixel = await resp.json();
-    document.getElementById('coord').innerText = `Lat: ${lat}, Lon: ${lon}`;
-    document.getElementById('red').innerText = `Red (B4): ${pixel['B4'] ?? '-'}`;
-    document.getElementById('nir').innerText = `NIR (B8): ${pixel['B8'] ?? '-'}`;
-  };
-
-  // --- Click on Map to get Pixel ---
-  map.on('click', async function(e){
-    document.getElementById('lat').value = e.latlng.lat.toFixed(6);
-    document.getElementById('lon').value = e.latlng.lng.toFixed(6);
-    document.getElementById('getPixel').click();
-  });
-</script>
+  </script>
+</body>
+</html>
