@@ -1,109 +1,58 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-  <meta charset="UTF-8">
-  <title>Satellite Viewer</title>
+  <meta charset="utf-8">
+  <title>Sentinel-2 Viewer</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
   <style>
-    body, html { margin:0; padding:0; height:100%; }
-    #map { height:100%; }
-
-    /* Sidebar ขวา */
+    body { margin:0; padding:0; }
+    #map { height:100vh; width:75%; float:left; }
     #sidebar {
-      position: absolute;
-      top: 10px;
-      right: 10px;
-      width: 280px;
-      padding: 15px;
-      background: rgba(255,255,255,0.95);
-      box-shadow: 0 4px 12px rgba(0,0,0,0.2);
-      border-radius: 8px;
-      font-family: sans-serif;
-      z-index: 1000;
+      width:25%; height:100vh; float:right; padding:15px; box-sizing:border-box;
+      background:#f7f7f7; overflow-y:auto; font-family:sans-serif;
     }
-    #sidebar h2 {
-      margin: 0 0 10px;
-      font-size: 18px;
-      color: #333;
-    }
-    #sidebar label {
-      font-size: 14px;
-      font-weight: bold;
-      margin-top: 8px;
-      display: block;
-    }
-    #sidebar input, #sidebar button {
-      width: 100%;
-      margin-top: 5px;
-      padding: 6px;
-      border-radius: 4px;
-      border: 1px solid #ccc;
-      font-size: 14px;
-    }
-    #sidebar button {
-      background: #4CAF50;
-      color: white;
-      cursor: pointer;
-      border: none;
-    }
-    #sidebar button:hover {
-      background: #45a049;
-    }
-    #info {
-      margin-top: 12px;
-      font-size: 14px;
-      background: #f9f9f9;
-      padding: 10px;
-      border-radius: 6px;
-      border: 1px solid #ddd;
-    }
+    h3 { margin-top:0; }
+    label { display:block; margin-top:10px; font-weight:bold; }
+    input, button { width:90%; margin-top:5px; padding:5px; font-size:14px; }
+    hr { margin:15px 0; }
+    #pixelData p { margin:5px 0; }
   </style>
 </head>
 <body>
   <div id="map"></div>
   <div id="sidebar">
-    <h2>Satellite Control</h2>
-    <label for="start">Start Date</label>
-    <input type="date" id="start" value="2025-01-01">
-    <label for="end">End Date</label>
-    <input type="date" id="end" value="2025-09-30">
-    <button id="loadMap">Load Satellite</button>
+    <h3>Sentinel-2 Control</h3>
+    <label>Start Date:</label>
+    <input type="date" id="start" value="2020-01-01">
+    <label>End Date:</label>
+    <input type="date" id="end" value="2020-01-15">
+    <button id="loadMap">Load Map</button>
 
-    <label for="coords">Coordinates (lat,lon)</label>
-    <input type="text" id="coords" placeholder="Click map or enter here">
+    <hr>
 
-    <div id="info">Click on map to get Red & NIR</div>
+    <h4>Pixel Info</h4>
+    <label>Latitude:</label>
+    <input type="number" id="lat" step="0.0001">
+    <label>Longitude:</label>
+    <input type="number" id="lon" step="0.0001">
+    <button id="getPixel">Get Pixel</button>
+
+    <div id="pixelData" style="margin-top:10px;">
+      <p><strong>Selected Point:</strong></p>
+      <p id="coord">Lat: -, Lon: -</p>
+      <p id="red">Red (B4): -</p>
+      <p id="nir">NIR (B8): -</p>
+    </div>
   </div>
 
   <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
   <script>
-    // Base layers
-    let osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 19,
-      attribution: '© OpenStreetMap'
-    });
+    // --- Map initialization ---
+    var map = L.map('map').setView([19.2, 100.1], 10);
 
-    let hybrid = L.tileLayer(
-      'https://api.maptiler.com/maps/hybrid/{z}/{x}/{y}.jpg?key=SorpWvu9Cx7zkYKrxJbN',
-      { attribution: '© MapTiler © OpenStreetMap contributors', tileSize: 512, zoomOffset: -1 }
-    );
+    var s2layer; // Sentinel-2 overlay
 
-    let map = L.map('map', {
-      center: [15, 100],
-      zoom: 6,
-      layers: [osm]
-    });
-
-    let baseMaps = {
-      "OpenStreetMap": osm,
-      "Satellite Hybrid": hybrid
-    };
-
-    L.control.layers(baseMaps).addTo(map);
-
-    let s2layer;
-
-    // โหลด Sentinel-2
+    // --- Load Map Button ---
     document.getElementById('loadMap').onclick = async function() {
       let start = document.getElementById('start').value;
       let end = document.getElementById('end').value;
@@ -116,30 +65,39 @@
       let data = await resp.json();
 
       if(s2layer) map.removeLayer(s2layer);
-      s2layer = L.tileLayer(data.tile_url).addTo(map);
-
-      // ให้ Sentinel-2 อยู่บนสุดเสมอ
-      s2layer.bringToFront();
+      s2layer = L.tileLayer(data.tile_url).addTo(map); 
+      s2layer.bringToFront(); // บังคับให้อยู่บนสุด
     };
 
-    // กดบนแผนที่
-    map.on('click', async function(e) {
-      let lat = e.latlng.lat.toFixed(5);
-      let lon = e.latlng.lng.toFixed(5);
-      document.getElementById('coords').value = `${lat},${lon}`;
+    // --- Get Pixel Button ---
+    document.getElementById('getPixel').onclick = async function() {
+      let lat = parseFloat(document.getElementById('lat').value);
+      let lon = parseFloat(document.getElementById('lon').value);
+      let start = document.getElementById('start').value;
+      let end = document.getElementById('end').value;
 
-      let resp = await fetch('/get_value', {
+      if(isNaN(lat) || isNaN(lon)) {
+        alert("Please enter valid coordinates!");
+        return;
+      }
+
+      let resp = await fetch('/get_pixel', {
         method:'POST',
         headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({lat, lon})
+        body: JSON.stringify({lat, lon, start, end})
       });
-      let data = await resp.json();
 
-      document.getElementById('info').innerHTML = `
-        <b>Coordinates:</b> ${lat}, ${lon}<br>
-        <b>Red (B4):</b> ${data.red}<br>
-        <b>NIR (B8):</b> ${data.nir}
-      `;
+      let pixel = await resp.json();
+      document.getElementById('coord').innerText = `Lat: ${lat}, Lon: ${lon}`;
+      document.getElementById('red').innerText = `Red (B4): ${pixel['B4'] ?? '-'}`;
+      document.getElementById('nir').innerText = `NIR (B8): ${pixel['B8'] ?? '-'}`;
+    };
+
+    // --- Click on Map to get Pixel ---
+    map.on('click', async function(e){
+      document.getElementById('lat').value = e.latlng.lat.toFixed(6);
+      document.getElementById('lon').value = e.latlng.lng.toFixed(6);
+      document.getElementById('getPixel').click();
     });
   </script>
 </body>
