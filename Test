@@ -47,8 +47,29 @@
 
   <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
   <script>
+    // --- Base maps ---
+    var osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; OpenStreetMap contributors'
+    });
+
+    var esri = L.tileLayer(
+      'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+      { attribution: 'Tiles © Esri' }
+    );
+
     // --- Map initialization ---
-    var map = L.map('map').setView([19.2, 100.1], 10);
+    var map = L.map('map', {
+      center: [19.2, 100.1],
+      zoom: 10,
+      layers: [osm]  // เริ่มต้นด้วย OSM
+    });
+
+    // --- Layer control (เลือก base map) ---
+    var baseMaps = {
+      "OpenStreetMap": osm,
+      "Esri World Imagery": esri
+    };
+    L.control.layers(baseMaps, null, {collapsed: false}).addTo(map);
 
     var s2layer; // Sentinel-2 overlay
 
@@ -66,7 +87,7 @@
 
       if(s2layer) map.removeLayer(s2layer);
       s2layer = L.tileLayer(data.tile_url).addTo(map);
-      s2layer.bringToFront(); // บังคับให้ภาพ Sentinel-2 อยู่บนสุด
+      s2layer.bringToFront(); // ✅ Sentinel-2 อยู่บนสุดเสมอ
     };
 
     // --- Get Pixel Button ---
