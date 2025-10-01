@@ -52,10 +52,18 @@
       attribution: '&copy; OpenStreetMap contributors'
     });
 
-    var esri = L.tileLayer(
-      'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-      { attribution: 'Tiles © Esri' }
-    );
+    // MapTiler Hybrid จาก URL tiles.json
+    // Leaflet สามารถใช้ endpoint แบบ tiles.json ได้ ผ่าน L.tileLayer.provider หรือ custom
+    var maptilerHybrid = L.tileLayer('https://api.maptiler.com/maps/hybrid/{z}/{x}/{y}.png?key=SorpWvu9Cx7zkYKrxJbN', {
+      attribution: '&copy; MapTiler',
+      tileSize: 512,   // ถ้าต้องการ 512px tiles
+      zoomOffset: -1    // ปรับ zoomOffset ถ้าใช้ tileSize = 512
+    });
+
+    // ถ้าอยากใช้ 256px:
+    // var maptilerHybrid = L.tileLayer('https://api.maptiler.com/maps/hybrid/{z}/{x}/{y}.png?key=SorpWvu9Cx7zkYKrxJbN', {
+    //   attribution: '&copy; MapTiler'
+    // });
 
     // --- Map initialization ---
     var map = L.map('map', {
@@ -67,7 +75,7 @@
     // --- Layer control (เลือก base map) ---
     var baseMaps = {
       "OpenStreetMap": osm,
-      "Esri World Imagery": esri
+      "MapTiler Hybrid": maptilerHybrid
     };
     L.control.layers(baseMaps, null, {collapsed: false}).addTo(map);
 
@@ -87,7 +95,7 @@
 
       if(s2layer) map.removeLayer(s2layer);
       s2layer = L.tileLayer(data.tile_url).addTo(map);
-      s2layer.bringToFront(); // ✅ Sentinel-2 อยู่บนสุดเสมอ
+      s2layer.bringToFront(); // ให้ Sentinel-2 อยู่บนสุดเสมอ
     };
 
     // --- Get Pixel Button ---
