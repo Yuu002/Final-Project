@@ -1,20 +1,87 @@
-def theos_style_visualization(image):
-    # Sun geometry จาก metadata THEOS
-    sun_elevation_deg = 44.344240
-    incidence_deg = 3.046793
+from flask import Flask, render_template, request, jsonify
+import ee
 
-    sun_elevation_rad = ee.Number(sun_elevation_deg).multiply(3.141592653589793).divide(180)
-    incidence_rad = ee.Number(incidence_deg).multiply(3.141592653589793).divide(180)
+# Initialize Earth Engine
+ee.Initialize(project='map-web-473508')
 
-    # Lambertian + Incidence correction
-    correction_factor = incidence_rad.cos().divide(sun_elevation_rad.sin())
+app = Flask(__name__)
 
-    corrected = image.multiply(correction_factor)
+# -----------------------------
+# Cloud Mask Function (Sentinel-2 → DN 10-bit)
+# -----------------------------
+def mask_s2_clouds(image):
+    qa = image.select('QA60')
+    cloud_bit_mask = 1 << 10
+    cirrus_bit_mask = 1 << 11
+    mask = qa.bitwiseAnd(cloud_bit_mask).eq(0) \
+           .And(qa.bitwiseAnd(cirrus_bit_mask).eq(0))
+    
+    # scale: reflectance(0-1) → DN(0–1023)
+    dn_image = image.multiply(1023).divide(10000).toUint16()
+    
+    return dn_image.updateMask(mask)
 
-    # Scale กลับให้เหมือน THEOS DN (0–1023)
-    return corrected.visualize(
-        bands=['B4', 'B3', 'B2'],
-        min=0,
-        max=1023,
-        gamma=1.0
+# -----------------------------
+# Route index.html
+# -----------------------------
+@app.route('/')
+def index():
+    return render_template('index.html')
+
+# -----------------------------
+# Endpoint ดึงแผนที่ Sentinel-2 → DN
+# -----------------------------
+@app.route('/get_map', methods=['POST'])
+def get_map():
+    start = request.json['start']
+    end = request.json['end']
+
+    collection = (ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
+                  .filterDate(start, end)
+                  .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
+                  .map(mask_s2_clouds))
+
+    image = collection.mean()
+
+    vis_params = {
+        'bands': ['B4', 'B3', 'B2'],  # Red, Green, Blue
+        'min': 0,
+        'max': 1023,   # THEOS-1 DN range
+        'gamma': 1.0
+    }
+
+    map_id_dict = ee.Image(image).getMapId(vis_params)
+    tile_url = map_id_dict['tile_fetcher'].url_format
+
+    return jsonify({'tile_url': tile_url})
+
+# -----------------------------
+# Endpoint ดึงค่า pixel (DN)
+# -----------------------------
+@app.route('/get_pixel', methods=['POST'])
+def get_pixel():
+    lat = float(request.json['lat'])
+    lon = float(request.json['lon'])
+    start = request.json['start']
+    end = request.json['end']
+
+    point = ee.Geometry.Point([lon, lat])
+
+    collection = (ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
+                  .filterDate(start, end)
+                  .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
+                  .map(mask_s2_clouds))
+
+    image = collection.mean()  # pixel ตอนนี้เป็น DN (0–1023)
+
+    bands = image.reduceRegion(
+        reducer=ee.Reducer.first(),
+        geometry=point,
+        scale=10
     )
+
+    return jsonify(bands.getInfo())
+
+# -----------------------------
+if __name__ == '__main__':
+    app.run(debug=True)
