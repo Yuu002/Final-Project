@@ -38,13 +38,18 @@
     <button id="getPixel">Get Pixel</button>
 
     <div id="pixelData" style="margin-top:10px;">
-      <p><strong>Selected Point:</strong></p>
-      <p id="coord">Lat: -, Lon: -</p>
-      <p id="red">Red (B4): -</p>
-      <p id="green">Green (B3): -</p>
-      <p id="blue">Blue (B2): -</p>
-      <p id="nir">NIR (B8): -</p>
-    </div>
+  <p><strong>Selected Point:</strong></p>
+  <p id="coord">Lat: -, Lon: -</p>
+  <hr>
+  <p><strong>Sentinel-2 Pixel Reflectance (0–10000)</strong></p>
+  <p id="red">Red (B4): -</p>
+  <p id="green">Green (B3): -</p>
+  <p id="blue">Blue (B2): -</p>
+  <p id="nir">NIR (B8): -</p>
+  <hr>
+  <p><strong>THEOS-style DN (0–1023)</strong></p>
+  <p>※ ใช้สำหรับแสดงผลภาพเท่านั้น ไม่สามารถดึงค่า Pixel ได้</p>
+</div>
   </div>
 
   <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
@@ -174,3 +179,4 @@
   </script>
 </body>
 </html>
+
