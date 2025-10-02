@@ -29,7 +29,6 @@ def index():
 def get_map():
     start = request.json['start']
     end = request.json['end']
-    mode = request.json.get('mode', 'sentinel')  # default = sentinel
 
     collection = (ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
                   .filterDate(start, end)
@@ -38,27 +37,28 @@ def get_map():
 
     image = collection.mean()
 
-    if mode == 'theos':
-        # แสดงผลแบบ THEOS (0–1023 look)
-        vis_params = {
-            'bands': ['B4', 'B3', 'B2'],
-            'min': 0,
-            'max': 1023,
-            'gamma': 1.0
-        }
-    else:
-        # แสดงผล Sentinel ปกติ (reflectance scale)
-        vis_params = {
-            'bands': ['B4', 'B3', 'B2'],
-            'min': 0,
-            'max': 3000,
-            'gamma': 1.0
-        }
+    # Sentinel-2 Natural (scale 0–3000)
+    vis_sentinel = {
+        'bands': ['B4', 'B3', 'B2'],
+        'min': 0,
+        'max': 3000,
+        'gamma': 1.0
+    }
+    map_id_sentinel = ee.Image(image).getMapId(vis_sentinel)
 
-    map_id_dict = ee.Image(image).getMapId(vis_params)
-    tile_url = map_id_dict['tile_fetcher'].url_format
+    # THEOS-style (scale 0–1023)
+    vis_theos = {
+        'bands': ['B4', 'B3', 'B2'],
+        'min': 0,
+        'max': 1023,
+        'gamma': 1.0
+    }
+    map_id_theos = ee.Image(image).getMapId(vis_theos)
 
-    return jsonify({'tile_url': tile_url, 'mode': mode})
+    return jsonify({
+        'sentinel_url': map_id_sentinel['tile_fetcher'].url_format,
+        'theos_url': map_id_theos['tile_fetcher'].url_format
+    })
 
 # -----------------------------
 # Endpoint ดึงค่า pixel (Always Reflectance 0–10000)
@@ -90,9 +90,7 @@ def get_pixel():
 # -----------------------------
 if __name__ == '__main__':
     app.run(debug=True)
-
 --
-
 
 <!DOCTYPE html>
 <html>
@@ -134,13 +132,13 @@ if __name__ == '__main__':
     <button id="getPixel">Get Pixel</button>
 
     <div id="pixelData" style="margin-top:10px;">
-  <p><strong>Selected Point:</strong></p>
-  <p id="coord">Lat: -, Lon: -</p>
-  <p id="red">Red (B4): -</p>
-  <p id="green">Green (B3): -</p>
-  <p id="blue">Blue (B2): -</p>
-  <p id="nir">NIR (B8): -</p>
-</div>
+      <p><strong>Selected Point:</strong></p>
+      <p id="coord">Lat: -, Lon: -</p>
+      <p id="red">Red (B4): -</p>
+      <p id="green">Green (B3): -</p>
+      <p id="blue">Blue (B2): -</p>
+      <p id="nir">NIR (B8): -</p>
+    </div>
   </div>
 
   <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
@@ -167,14 +165,12 @@ if __name__ == '__main__':
       "MapTiler Hybrid": maptilerHybrid
     };
 
-    // --- Overlay layers (เริ่มต้นว่าง) ---
+    // --- Overlay layers ---
     var overlayMaps = {};
-
-    // --- Add layer control ---
     var layerControl = L.control.layers(baseMaps, overlayMaps, {collapsed: false}).addTo(map);
 
-    var s2layer; // Sentinel-2 overlay
-    var marker;  // เก็บ marker ล่าสุด
+    var s2layer = {}; // เก็บ Sentinel และ THEOS
+    var marker;       // marker ล่าสุด
 
     // --- Load Map Button ---
     document.getElementById('loadMap').onclick = async function() {
@@ -188,46 +184,56 @@ if __name__ == '__main__':
       });
       let data = await resp.json();
 
-      if(s2layer) {
-        map.removeLayer(s2layer);
-        layerControl.removeLayer(s2layer); // เอาออกจาก control เดิม
+      // ถ้ามี layer เดิม ลบออกก่อน
+      if(s2layer.sentinel) {
+        map.removeLayer(s2layer.sentinel);
+        map.removeLayer(s2layer.theos);
+        layerControl.removeLayer(s2layer.sentinel);
+        layerControl.removeLayer(s2layer.theos);
       }
 
-      s2layer = L.tileLayer(data.tile_url);
-      s2layer.addTo(map);
-      s2layer.bringToFront();
+      // --- Sentinel Natural ---
+      let sentinelLayer = L.tileLayer(data.sentinel_url);
+      // --- THEOS-style ---
+      let theosLayer = L.tileLayer(data.theos_url);
 
-      // เพิ่ม Sentinel-2 เข้าไปใน overlay control
-      layerControl.addOverlay(s2layer, "Sentinel-2");
+      // Default แสดง Sentinel ก่อน
+      sentinelLayer.addTo(map);
+
+      // เก็บไว้
+      s2layer = { sentinel: sentinelLayer, theos: theosLayer };
+
+      // เพิ่มเข้า overlay control
+      layerControl.addOverlay(sentinelLayer, "Sentinel-2 Natural");
+      layerControl.addOverlay(theosLayer, "THEOS-style");
     };
+
     // --- Function: แสดง marker ---
     function showMarker(lat, lon) {
-      if(marker) {
-        map.removeLayer(marker);
-      }
+      if(marker) map.removeLayer(marker);
       marker = L.marker([lat, lon]).addTo(map);
       marker.bindPopup(`Lat: ${lat.toFixed(6)}, Lon: ${lon.toFixed(6)}`).openPopup();
     }
 
     // --- Get Pixel Button ---
     async function getPixelData(lat, lon, start, end) {
-  let resp = await fetch('/get_pixel', {
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({lat, lon, start, end})
-  });
-  let pixel = await resp.json();
+      let resp = await fetch('/get_pixel', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({lat, lon, start, end})
+      });
+      let pixel = await resp.json();
 
-  function formatVal(val) {
-    return (val !== null && val !== undefined) ? Number(val).toFixed(5) : '-';
-  }
+      function formatVal(val) {
+        return (val !== null && val !== undefined) ? Number(val).toFixed(5) : '-';
+      }
 
-  document.getElementById('coord').innerText = `Lat: ${lat}, Lon: ${lon}`;
-  document.getElementById('red').innerText   = `Red (B4): ${formatVal(pixel['B4'])}`;
-  document.getElementById('green').innerText = `Green (B3): ${formatVal(pixel['B3'])}`;
-  document.getElementById('blue').innerText  = `Blue (B2): ${formatVal(pixel['B2'])}`;
-  document.getElementById('nir').innerText   = `NIR (B8): ${formatVal(pixel['B8'])}`;
-}
+      document.getElementById('coord').innerText = `Lat: ${lat}, Lon: ${lon}`;
+      document.getElementById('red').innerText   = `Red (B4): ${formatVal(pixel['B4'])}`;
+      document.getElementById('green').innerText = `Green (B3): ${formatVal(pixel['B3'])}`;
+      document.getElementById('blue').innerText  = `Blue (B2): ${formatVal(pixel['B2'])}`;
+      document.getElementById('nir').innerText   = `NIR (B8): ${formatVal(pixel['B8'])}`;
+    }
 
     document.getElementById('getPixel').onclick = async function() {
       let lat = parseFloat(document.getElementById('lat').value);
@@ -240,10 +246,8 @@ if __name__ == '__main__':
         return;
       }
 
-      // เด้งไปพิกัดที่กรอก
       map.setView([lat, lon], 14);
       showMarker(lat, lon);
-
       await getPixelData(lat, lon, start, end);
     };
 
@@ -261,18 +265,6 @@ if __name__ == '__main__':
       let end = document.getElementById('end').value;
       await getPixelData(lat, lon, start, end);
     });
-
-    // --- Enter key event: trigger Get Pixel ---
-    document.getElementById('lat').addEventListener("keypress", function(e) {
-      if (e.key === "Enter") {
-        document.getElementById('getPixel').click();
-      }
-    });
-    document.getElementById('lon').addEventListener("keypress", function(e) {
-      if (e.key === "Enter") {
-        document.getElementById('getPixel').click();
-      }
-    });
-</script>
+  </script>
 </body>
 </html>
