@@ -1,182 +1,20 @@
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <title>Sentinel-2 Viewer</title>
-  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
-  <style>
-    body { margin:0; padding:0; }
-    #map { height:100vh; width:75%; float:left; }
-    #sidebar {
-      width:25%; height:100vh; float:right; padding:15px; box-sizing:border-box;
-      background:#f7f7f7; overflow-y:auto; font-family:sans-serif;
-    }
-    h3 { margin-top:0; }
-    label { display:block; margin-top:10px; font-weight:bold; }
-    input, button { width:90%; margin-top:5px; padding:5px; font-size:14px; }
-    hr { margin:15px 0; }
-    #pixelData p { margin:5px 0; }
-  </style>
-</head>
-<body>
-  <div id="map"></div>
-  <div id="sidebar">
-    <h3>Sentinel-2 Control</h3>
-    <label>Start Date:</label>
-    <input type="date" id="start" value="2020-01-01">
-    <label>End Date:</label>
-    <input type="date" id="end" value="2020-01-15">
-    <button id="loadMap">Load Map</button>
+def theos_style_visualization(image):
+    # Sun geometry จาก metadata THEOS
+    sun_elevation_deg = 44.344240
+    incidence_deg = 3.046793
 
-    <hr>
+    sun_elevation_rad = ee.Number(sun_elevation_deg).multiply(3.141592653589793).divide(180)
+    incidence_rad = ee.Number(incidence_deg).multiply(3.141592653589793).divide(180)
 
-    <h4>Pixel Info</h4>
-    <label>Latitude:</label>
-    <input type="number" id="lat" step="0.0001">
-    <label>Longitude:</label>
-    <input type="number" id="lon" step="0.0001">
-    <button id="getPixel">Get Pixel</button>
+    # Lambertian + Incidence correction
+    correction_factor = incidence_rad.cos().divide(sun_elevation_rad.sin())
 
-    <div id="pixelData" style="margin-top:10px;">
-  <p><strong>Selected Point:</strong></p>
-  <p id="coord">Lat: -, Lon: -</p>
-  <hr>
-  <p><strong>Sentinel-2 Pixel Reflectance (0–10000)</strong></p>
-  <p id="red">Red (B4): -</p>
-  <p id="green">Green (B3): -</p>
-  <p id="blue">Blue (B2): -</p>
-  <p id="nir">NIR (B8): -</p>
-  <hr>
-  <p><strong>THEOS-style DN (0–1023)</strong></p>
-  <p>※ ใช้สำหรับแสดงผลภาพเท่านั้น ไม่สามารถดึงค่า Pixel ได้</p>
-</div>
-  </div>
+    corrected = image.multiply(correction_factor)
 
-  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
-  <script>
-    // --- Base maps ---
-    var osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '&copy; OpenStreetMap contributors'
-    });
-
-    var maptilerHybrid = L.tileLayer('https://api.maptiler.com/maps/hybrid/{z}/{x}/{y}.png?key=SorpWvu9Cx7zkYKrxJbN', {
-      attribution: '&copy; MapTiler',
-      tileSize: 512,
-      zoomOffset: -1
-    });
-
-    var map = L.map('map', {
-      center: [19.2, 100.1],
-      zoom: 10,
-      layers: [osm]
-    });
-
-    var baseMaps = {
-      "OpenStreetMap": osm,
-      "MapTiler Hybrid": maptilerHybrid
-    };
-
-    // --- Overlay layers ---
-    var overlayMaps = {};
-    var layerControl = L.control.layers(baseMaps, overlayMaps, {collapsed: false}).addTo(map);
-
-    var s2layer = {}; // เก็บ Sentinel และ THEOS
-    var marker;       // marker ล่าสุด
-
-    // --- Load Map Button ---
-    document.getElementById('loadMap').onclick = async function() {
-      let start = document.getElementById('start').value;
-      let end = document.getElementById('end').value;
-
-      let resp = await fetch('/get_map', {
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({start, end})
-      });
-      let data = await resp.json();
-
-      // ถ้ามี layer เดิม ลบออกก่อน
-      if(s2layer.sentinel) {
-        map.removeLayer(s2layer.sentinel);
-        map.removeLayer(s2layer.theos);
-        layerControl.removeLayer(s2layer.sentinel);
-        layerControl.removeLayer(s2layer.theos);
-      }
-
-      // --- Sentinel Natural ---
-      let sentinelLayer = L.tileLayer(data.sentinel_url);
-      // --- THEOS-style ---
-      let theosLayer = L.tileLayer(data.theos_url);
-
-      // Default แสดง Sentinel ก่อน
-      sentinelLayer.addTo(map);
-
-      // เก็บไว้
-      s2layer = { sentinel: sentinelLayer, theos: theosLayer };
-
-      // เพิ่มเข้า overlay control
-      layerControl.addOverlay(sentinelLayer, "Sentinel-2 Natural");
-      layerControl.addOverlay(theosLayer, "THEOS-style");
-    };
-
-    // --- Function: แสดง marker ---
-    function showMarker(lat, lon) {
-      if(marker) map.removeLayer(marker);
-      marker = L.marker([lat, lon]).addTo(map);
-      marker.bindPopup(`Lat: ${lat.toFixed(6)}, Lon: ${lon.toFixed(6)}`).openPopup();
-    }
-
-    // --- Get Pixel Button ---
-    async function getPixelData(lat, lon, start, end) {
-      let resp = await fetch('/get_pixel', {
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({lat, lon, start, end})
-      });
-      let pixel = await resp.json();
-
-      function formatVal(val) {
-        return (val !== null && val !== undefined) ? Number(val).toFixed(5) : '-';
-      }
-
-      document.getElementById('coord').innerText = `Lat: ${lat}, Lon: ${lon}`;
-      document.getElementById('red').innerText   = `Red (B4): ${formatVal(pixel['B4'])}`;
-      document.getElementById('green').innerText = `Green (B3): ${formatVal(pixel['B3'])}`;
-      document.getElementById('blue').innerText  = `Blue (B2): ${formatVal(pixel['B2'])}`;
-      document.getElementById('nir').innerText   = `NIR (B8): ${formatVal(pixel['B8'])}`;
-    }
-
-    document.getElementById('getPixel').onclick = async function() {
-      let lat = parseFloat(document.getElementById('lat').value);
-      let lon = parseFloat(document.getElementById('lon').value);
-      let start = document.getElementById('start').value;
-      let end = document.getElementById('end').value;
-
-      if(isNaN(lat) || isNaN(lon)) {
-        alert("Please enter valid coordinates!");
-        return;
-      }
-
-      map.setView([lat, lon], 14);
-      showMarker(lat, lon);
-      await getPixelData(lat, lon, start, end);
-    };
-
-    // --- Click on Map to get Pixel ---
-    map.on('click', async function(e){
-      let lat = e.latlng.lat;
-      let lon = e.latlng.lng;
-
-      document.getElementById('lat').value = lat.toFixed(6);
-      document.getElementById('lon').value = lon.toFixed(6);
-
-      showMarker(lat, lon);
-
-      let start = document.getElementById('start').value;
-      let end = document.getElementById('end').value;
-      await getPixelData(lat, lon, start, end);
-    });
-  </script>
-</body>
-</html>
-
+    # Scale กลับให้เหมือน THEOS DN (0–1023)
+    return corrected.visualize(
+        bands=['B4', 'B3', 'B2'],
+        min=0,
+        max=1023,
+        gamma=1.0
+    )
