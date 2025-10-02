@@ -7,7 +7,7 @@ ee.Initialize(project='map-web-473508')
 app = Flask(__name__)
 
 # -----------------------------
-# Cloud Mask Function (Sentinel-2 → DN 10-bit)
+# Cloud Mask Function (Sentinel-2 SR → Reflectance scale 0–10000)
 # -----------------------------
 def mask_s2_clouds(image):
     qa = image.select('QA60')
@@ -16,20 +16,17 @@ def mask_s2_clouds(image):
     mask = qa.bitwiseAnd(cloud_bit_mask).eq(0) \
            .And(qa.bitwiseAnd(cirrus_bit_mask).eq(0))
     
-    # scale: reflectance(0-1) → DN(0–1023)
-    dn_image = image.multiply(1023).divide(10000).toUint16()
-    
-    return dn_image.updateMask(mask)
+    # ✅ ไม่แปลงไป DN (0–1023) แล้ว
+    # ใช้ค่า SR เดิม (0–10000) ซึ่งเป็น reflectance scaled
+    return image.updateMask(mask)
 
-# -----------------------------
-# Route index.html
 # -----------------------------
 @app.route('/')
 def index():
     return render_template('index.html')
 
 # -----------------------------
-# Endpoint ดึงแผนที่ Sentinel-2 → DN
+# Endpoint ดึงแผนที่ Sentinel-2 (Reflectance scale)
 # -----------------------------
 @app.route('/get_map', methods=['POST'])
 def get_map():
@@ -46,7 +43,7 @@ def get_map():
     vis_params = {
         'bands': ['B4', 'B3', 'B2'],  # Red, Green, Blue
         'min': 0,
-        'max': 1023,   # THEOS-1 DN range
+        'max': 3000,   # ปรับให้แสดงชัดเจน (เพราะ SR scale 0–10000)
         'gamma': 1.0
     }
 
@@ -56,7 +53,7 @@ def get_map():
     return jsonify({'tile_url': tile_url})
 
 # -----------------------------
-# Endpoint ดึงค่า pixel (DN)
+# Endpoint ดึงค่า pixel (Reflectance scale 0–10000)
 # -----------------------------
 @app.route('/get_pixel', methods=['POST'])
 def get_pixel():
@@ -72,7 +69,7 @@ def get_pixel():
                   .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
                   .map(mask_s2_clouds))
 
-    image = collection.mean()  # pixel ตอนนี้เป็น DN (0–1023)
+    image = collection.mean()  # ✅ ค่า pixel ตอนนี้ = SR scale (0–10000)
 
     bands = image.reduceRegion(
         reducer=ee.Reducer.first(),
