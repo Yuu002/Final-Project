@@ -1,3 +1,99 @@
+from flask import Flask, render_template, request, jsonify
+import ee
+
+# Initialize Earth Engine
+ee.Initialize(project='map-web-473508')
+
+app = Flask(__name__)
+
+# -----------------------------
+# Cloud Mask Function (Sentinel-2 SR → Reflectance 0–10000)
+# -----------------------------
+def mask_s2_clouds_reflectance(image):
+    qa = image.select('QA60')
+    cloud_bit_mask = 1 << 10
+    cirrus_bit_mask = 1 << 11
+    mask = qa.bitwiseAnd(cloud_bit_mask).eq(0) \
+           .And(qa.bitwiseAnd(cirrus_bit_mask).eq(0))
+    return image.updateMask(mask)  # ✅ คงค่า reflectance 0–10000
+
+# -----------------------------
+@app.route('/')
+def index():
+    return render_template('index.html')
+
+# -----------------------------
+# Endpoint ดึงแผนที่ Sentinel-2
+# -----------------------------
+@app.route('/get_map', methods=['POST'])
+def get_map():
+    start = request.json['start']
+    end = request.json['end']
+    mode = request.json.get('mode', 'sentinel')  # default = sentinel
+
+    collection = (ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
+                  .filterDate(start, end)
+                  .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
+                  .map(mask_s2_clouds_reflectance))
+
+    image = collection.mean()
+
+    if mode == 'theos':
+        # แสดงผลแบบ THEOS (0–1023 look)
+        vis_params = {
+            'bands': ['B4', 'B3', 'B2'],
+            'min': 0,
+            'max': 1023,
+            'gamma': 1.0
+        }
+    else:
+        # แสดงผล Sentinel ปกติ (reflectance scale)
+        vis_params = {
+            'bands': ['B4', 'B3', 'B2'],
+            'min': 0,
+            'max': 3000,
+            'gamma': 1.0
+        }
+
+    map_id_dict = ee.Image(image).getMapId(vis_params)
+    tile_url = map_id_dict['tile_fetcher'].url_format
+
+    return jsonify({'tile_url': tile_url, 'mode': mode})
+
+# -----------------------------
+# Endpoint ดึงค่า pixel (Always Reflectance 0–10000)
+# -----------------------------
+@app.route('/get_pixel', methods=['POST'])
+def get_pixel():
+    lat = float(request.json['lat'])
+    lon = float(request.json['lon'])
+    start = request.json['start']
+    end = request.json['end']
+
+    point = ee.Geometry.Point([lon, lat])
+
+    collection = (ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
+                  .filterDate(start, end)
+                  .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
+                  .map(mask_s2_clouds_reflectance))
+
+    image = collection.mean()
+
+    bands = image.reduceRegion(
+        reducer=ee.Reducer.first(),
+        geometry=point,
+        scale=10
+    )
+
+    return jsonify(bands.getInfo())
+
+# -----------------------------
+if __name__ == '__main__':
+    app.run(debug=True)
+
+--
+
+
 <!DOCTYPE html>
 <html>
 <head>
@@ -180,4 +276,3 @@
 </script>
 </body>
 </html>
-
