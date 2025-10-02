@@ -7,7 +7,7 @@ ee.Initialize(project='map-web-473508')
 app = Flask(__name__)
 
 # -----------------------------
-# Cloud Mask Function (Sentinel-2 → DN 10-bit)
+# Cloud Mask Function (Sentinel-2 → Surface Reflectance)
 # -----------------------------
 def mask_s2_clouds(image):
     qa = image.select('QA60')
@@ -16,10 +16,8 @@ def mask_s2_clouds(image):
     mask = qa.bitwiseAnd(cloud_bit_mask).eq(0) \
            .And(qa.bitwiseAnd(cirrus_bit_mask).eq(0))
     
-    # scale: reflectance(0-1) → DN(0–1023)
-    dn_image = image.multiply(1023).divide(10000).toUint16()
-    
-    return dn_image.updateMask(mask)
+    # ไม่ scale DN แล้ว (จะใช้ค่า reflectance 0–1 จาก S2_SR โดยตรง)
+    return image.updateMask(mask)
 
 # -----------------------------
 # Route index.html
@@ -29,7 +27,7 @@ def index():
     return render_template('index.html')
 
 # -----------------------------
-# Endpoint ดึงแผนที่ Sentinel-2 → DN
+# Endpoint แผนที่ Sentinel-2 → RGB Reflectance
 # -----------------------------
 @app.route('/get_map', methods=['POST'])
 def get_map():
@@ -46,8 +44,8 @@ def get_map():
     vis_params = {
         'bands': ['B4', 'B3', 'B2'],  # Red, Green, Blue
         'min': 0,
-        'max': 1023,   # THEOS-1 DN range
-        'gamma': 1.0
+        'max': 0.3,   # reflectance (0–1), ปรับ 0–0.3 ให้ภาพสวยขึ้น
+        'gamma': 1.1
     }
 
     map_id_dict = ee.Image(image).getMapId(vis_params)
@@ -56,7 +54,7 @@ def get_map():
     return jsonify({'tile_url': tile_url})
 
 # -----------------------------
-# Endpoint ดึงค่า pixel (DN)
+# Endpoint ดึงค่า pixel (Reflectance ของ RGB, NIR)
 # -----------------------------
 @app.route('/get_pixel', methods=['POST'])
 def get_pixel():
@@ -72,9 +70,10 @@ def get_pixel():
                   .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
                   .map(mask_s2_clouds))
 
-    image = collection.mean()  # pixel ตอนนี้เป็น DN (0–1023)
+    image = collection.mean()
 
-    bands = image.reduceRegion(
+    # ดึงแค่ 4 band: R, G, B, NIR
+    bands = image.select(['B4', 'B3', 'B2', 'B8']).reduceRegion(
         reducer=ee.Reducer.first(),
         geometry=point,
         scale=10
