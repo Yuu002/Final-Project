@@ -1,2 +1,87 @@
-มวลชีวภาพเหนือพื้นดิน (Aboveground Biomass: AGB) เป็นตัวชี้วัดสำคัญที่ใช้ประเมินศักยภาพของระบบนิเวศและการกักเก็บคาร์บอน อย่างไรก็ตาม การเก็บข้อมูลภาคสนามแบบดั้งเดิมมักเผชิญข้อจำกัดด้านเวลา ค่าใช้จ่าย และความครอบคลุมเชิงพื้นที่ งานวิจัยนี้นำเสนอวิธีการประมาณค่ามวลชีวภาพเหนือพื้นดินโดยอาศัยข้อมูลจากภาพถ่ายดาวเทียมร่วมกับเทคนิคการเรียนรู้ของเครื่อง กระบวนการเริ่มจากการสกัดค่าความเข้มแสงด้วยวิธีเชิงพื้นที่ (zonal statistics) และนำข้อมูลดังกล่าวเข้าสู่แบบจำลองโครงข่ายประสาทเทียมแบบหลายชั้น (Multi-Layer Perceptron: MLP) เพื่อปรับการสะท้อนแสงให้สอดคล้องกับข้อมูลภาคสนาม ต่อจากนั้นจึงคำนวณดัชนีพืชพรรณที่สำคัญ 5 ชนิด ได้แก่ NDVI, TNDVI, SR, SAVI และ MSAVI2 ซึ่งถูกนำมาใช้เป็นตัวแปรต้นในการสร้างแบบจำลองทำนายมวลชีวภาพเหนือพื้นดิน ผลการศึกษาพบว่า วิธีการที่พัฒนาขึ้นสามารถลดความจำเป็นในการเก็บข้อมูลภาคสนาม เพิ่มความรวดเร็วและความแม่นยำในการประเมิน และยังสามารถประยุกต์ใช้กับพื้นที่ขนาดใหญ่ได้อย่างมีประสิทธิภาพ ทั้งนี้ แนวทางดังกล่าวมีศักยภาพในการสนับสนุนการติดตาม การจัดการ และการวางแผนใช้ทรัพยากรธรรมชาติอย่างยั่งยืนในระยะยาว
+from flask import Flask, render_template, request, jsonify
+import ee
 
+# Initialize Earth Engine
+ee.Initialize(project='map-web-473508')
+
+app = Flask(__name__)
+
+# -----------------------------
+# Cloud Mask Function (Sentinel-2 → DN 10-bit)
+# -----------------------------
+def mask_s2_clouds(image):
+    qa = image.select('QA60')
+    cloud_bit_mask = 1 << 10
+    cirrus_bit_mask = 1 << 11
+    mask = qa.bitwiseAnd(cloud_bit_mask).eq(0) \
+           .And(qa.bitwiseAnd(cirrus_bit_mask).eq(0))
+    
+    # scale: reflectance(0-1) → DN(0–1023)
+    dn_image = image.multiply(1023).divide(10000).toUint16()
+    
+    return dn_image.updateMask(mask)
+
+# -----------------------------
+# Route index.html
+# -----------------------------
+@app.route('/')
+def index():
+    return render_template('index.html')
+
+# -----------------------------
+# Endpoint ดึงแผนที่ Sentinel-2 → DN
+# -----------------------------
+@app.route('/get_map', methods=['POST'])
+def get_map():
+    start = request.json['start']
+    end = request.json['end']
+
+    collection = (ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
+                  .filterDate(start, end)
+                  .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
+                  .map(mask_s2_clouds))
+
+    image = collection.mean()
+
+    vis_params = {
+        'bands': ['B4', 'B3', 'B2'],  # Red, Green, Blue
+        'min': 0,
+        'max': 1023,   # THEOS-1 DN range
+        'gamma': 1.0
+    }
+
+    map_id_dict = ee.Image(image).getMapId(vis_params)
+    tile_url = map_id_dict['tile_fetcher'].url_format
+
+    return jsonify({'tile_url': tile_url})
+
+# -----------------------------
+# Endpoint ดึงค่า pixel (DN)
+# -----------------------------
+@app.route('/get_pixel', methods=['POST'])
+def get_pixel():
+    lat = float(request.json['lat'])
+    lon = float(request.json['lon'])
+    start = request.json['start']
+    end = request.json['end']
+
+    point = ee.Geometry.Point([lon, lat])
+
+    collection = (ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
+                  .filterDate(start, end)
+                  .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
+                  .map(mask_s2_clouds))
+
+    image = collection.mean()  # pixel ตอนนี้เป็น DN (0–1023)
+
+    bands = image.reduceRegion(
+        reducer=ee.Reducer.first(),
+        geometry=point,
+        scale=10
+    )
+
+    return jsonify(bands.getInfo())
+
+# -----------------------------
+if __name__ == '__main__':
+    app.run(debug=True)
