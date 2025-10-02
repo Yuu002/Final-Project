@@ -38,11 +38,13 @@
     <button id="getPixel">Get Pixel</button>
 
     <div id="pixelData" style="margin-top:10px;">
-      <p><strong>Selected Point:</strong></p>
-      <p id="coord">Lat: -, Lon: -</p>
-      <p id="red">Red (B4): -</p>
-      <p id="nir">NIR (B8): -</p>
-    </div>
+  <p><strong>Selected Point:</strong></p>
+  <p id="coord">Lat: -, Lon: -</p>
+  <p id="red">Red (B4): -</p>
+  <p id="green">Green (B3): -</p>
+  <p id="blue">Blue (B2): -</p>
+  <p id="nir">NIR (B8): -</p>
+</div>
   </div>
 
   <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
@@ -113,16 +115,23 @@
 
     // --- Get Pixel Button ---
     async function getPixelData(lat, lon, start, end) {
-      let resp = await fetch('/get_pixel', {
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({lat, lon, start, end})
-      });
-      let pixel = await resp.json();
-      document.getElementById('coord').innerText = `Lat: ${lat}, Lon: ${lon}`;
-      document.getElementById('red').innerText = `Red (B4): ${pixel['B4'] ?? '-'}`;
-      document.getElementById('nir').innerText = `NIR (B8): ${pixel['B8'] ?? '-'}`;
-    }
+  let resp = await fetch('/get_pixel', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({lat, lon, start, end})
+  });
+  let pixel = await resp.json();
+
+  function formatVal(val) {
+    return (val !== null && val !== undefined) ? Number(val).toFixed(5) : '-';
+  }
+
+  document.getElementById('coord').innerText = `Lat: ${lat}, Lon: ${lon}`;
+  document.getElementById('red').innerText   = `Red (B4): ${formatVal(pixel['B4'])}`;
+  document.getElementById('green').innerText = `Green (B3): ${formatVal(pixel['B3'])}`;
+  document.getElementById('blue').innerText  = `Blue (B2): ${formatVal(pixel['B2'])}`;
+  document.getElementById('nir').innerText   = `NIR (B8): ${formatVal(pixel['B8'])}`;
+}
 
     document.getElementById('getPixel').onclick = async function() {
       let lat = parseFloat(document.getElementById('lat').value);
@@ -171,4 +180,5 @@
 </script>
 </body>
 </html>
+
 
