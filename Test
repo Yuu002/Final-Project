@@ -1,32 +1,115 @@
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <title>Web Services Menu</title>
-  <style>
-    body { font-family: sans-serif; padding:20px; }
-    h2 { margin-top:0; }
-    ul { line-height:1.8; }
-    code { background:#eee; padding:2px 4px; }
-  </style>
-</head>
-<body>
-  <h2>Available Web Services</h2>
-  <ul>
-    <li>
-      <b>Home Page:</b> 
-      <a href="/">/</a> – แสดงแผนที่ Sentinel-2 + THEOS
-    </li>
-    <li>
-      <b>Get Map:</b> 
-      <code>POST /get_map</code><br>
-      Body JSON: <code>{"start":"2025-01-01","end":"2025-01-31"}</code>
-    </li>
-    <li>
-      <b>Get Pixel:</b> 
-      <code>POST /get_pixel</code><br>
-      Body JSON: <code>{"lat":13.7,"lon":100.5,"start":"2025-01-01","end":"2025-01-31"}</code>
-    </li>
-  </ul>
-</body>
-</html>
+from flask import Flask, render_template, request, jsonify
+import ee
+
+# Initialize Earth Engine
+ee.Initialize(project='map-web-473508')
+
+app = Flask(__name__)
+
+# -----------------------------
+# Cloud Mask Function (Sentinel-2 SR → Reflectance 0–100)
+# -----------------------------
+def mask_s2_clouds_reflectance(image):
+    qa = image.select('QA60')
+    cloud_bit_mask = 1 << 10
+    cirrus_bit_mask = 1 << 11
+    mask = qa.bitwiseAnd(cloud_bit_mask).eq(0) \
+           .And(qa.bitwiseAnd(cirrus_bit_mask).eq(0))
+    # ✅ scale 0–10000 → 0–100 by multiplying 100
+    reflectance = image.multiply(100).divide(10000)
+    return reflectance.updateMask(mask)
+
+# -----------------------------
+# Cloud Mask + DN scale (Sentinel-2 → THEOS-style DN 0–100)
+# -----------------------------
+def mask_s2_clouds_dn(image):
+    qa = image.select('QA60')
+    cloud_bit_mask = 1 << 10
+    cirrus_bit_mask = 1 << 11
+    mask = qa.bitwiseAnd(cloud_bit_mask).eq(0) \
+           .And(qa.bitwiseAnd(cirrus_bit_mask).eq(0))
+
+    # ✅ scale reflectance(0–10000) → DN(0–100) by multiplying 100/1023
+    dn_image = image.multiply(100).divide(10000).toUint16()
+    return dn_image.updateMask(mask)
+
+# -----------------------------
+@app.route('/')
+def index():
+    return render_template('index.html')
+
+# -----------------------------
+# Endpoint ดึงแผนที่ Sentinel-2 (reflectance) + THEOS-style (DN)
+# -----------------------------
+@app.route('/get_map', methods=['POST'])
+def get_map():
+    start = request.json['start']
+    end = request.json['end']
+
+    # Sentinel Reflectance
+    collection_ref = (ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
+                      .filterDate(start, end)
+                      .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
+                      .map(mask_s2_clouds_reflectance))
+    image_ref = collection_ref.mean()
+
+    vis_sentinel = {
+        'bands': ['B4', 'B3', 'B2'],
+        'min': 0,
+        'max': 100,
+        'gamma': 1.0
+    }
+    map_id_sentinel = ee.Image(image_ref).getMapId(vis_sentinel)
+
+    # THEOS-style DN
+    collection_dn = (ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
+                     .filterDate(start, end)
+                     .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
+                     .map(mask_s2_clouds_dn))
+    image_dn = collection_dn.mean()
+
+    vis_theos = {
+        'bands': ['B4', 'B3', 'B2'],
+        'min': 0,
+        'max': 100,
+        'gamma': 1.0
+    }
+    map_id_theos = ee.Image(image_dn).getMapId(vis_theos)
+
+    return jsonify({
+        'sentinel_url': map_id_sentinel['tile_fetcher'].url_format,
+        'theos_url': map_id_theos['tile_fetcher'].url_format
+    })
+
+# -----------------------------
+# Endpoint ดึงค่า pixel (Always Reflectance 0–100)
+# -----------------------------
+@app.route('/get_pixel', methods=['POST'])
+def services():
+    return render_template('services.html')
+def get_pixel():
+    lat = float(request.json['lat'])
+    lon = float(request.json['lon'])
+    start = request.json['start']
+    end = request.json['end']
+
+    point = ee.Geometry.Point([lon, lat])
+
+    collection = (ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
+                  .filterDate(start, end)
+                  .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
+                  .map(mask_s2_clouds_reflectance))
+
+    image = collection.mean()
+
+    bands = image.reduceRegion(
+        reducer=ee.Reducer.first(),
+        geometry=point,
+        scale=10
+    )
+
+    return jsonify(bands.getInfo())
+
+# -----------------------------
+if __name__ == '__main__':
+    app.run(debug=True)
