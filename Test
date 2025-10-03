@@ -1,113 +1,57 @@
-from flask import Flask, render_template, request, jsonify
-import ee
+# ml_model
+import pandas as pd
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import train_test_split
+from sklearn.neural_network import MLPRegressor
+import joblib
 
-# Initialize Earth Engine
-ee.Initialize(project='map-web-473508')
+# Load dataset
+data = pd.read_csv("bands_extracted.csv")
+X = data[["Band1", "Band2", "Band3", "Band4"]].values
+y = data[["Blue (B1)", "Green (B2)", "Red (B3)", "NIR (B4)"]].values
 
-app = Flask(__name__)
+# Scale features and outputs
+scaler_X = StandardScaler()
+X_scaled = scaler_X.fit_transform(X)
 
-# -----------------------------
-# Cloud Mask Function (Sentinel-2 SR → Reflectance 0–100)
-# -----------------------------
-def mask_s2_clouds_reflectance(image):
-    qa = image.select('QA60')
-    cloud_bit_mask = 1 << 10
-    cirrus_bit_mask = 1 << 11
-    mask = qa.bitwiseAnd(cloud_bit_mask).eq(0) \
-           .And(qa.bitwiseAnd(cirrus_bit_mask).eq(0))
-    # scale 0–10000 → 0–1 → คูณ 100 → 0–100
-    reflectance = image.divide(10000).multiply(100)
-    return reflectance.updateMask(mask)
+scaler_y = StandardScaler()
+y_scaled = scaler_y.fit_transform(y)
 
-# -----------------------------
-# Cloud Mask + DN scale (Sentinel-2 → THEOS-style DN 0–100)
-# -----------------------------
-def mask_s2_clouds_dn(image):
-    qa = image.select('QA60')
-    cloud_bit_mask = 1 << 10
-    cirrus_bit_mask = 1 << 11
-    mask = qa.bitwiseAnd(cloud_bit_mask).eq(0) \
-           .And(qa.bitwiseAnd(cirrus_bit_mask).eq(0))
+# Train/test split
+X_train, X_test, y_train, y_test = train_test_split(X_scaled, y_scaled, test_size=0.2, random_state=42)
 
-    # DN style = scale 0–10000 → 0–100 → Uint16
-    dn_image = image.divide(10000).multiply(100).toUint16()
-    return dn_image.updateMask(mask)
+# Train MLP
+mlp = MLPRegressor(hidden_layer_sizes=(64,64,32), max_iter=500, random_state=42)
+mlp.fit(X_train, y_train)
 
-# -----------------------------
-@app.route('/')
-def index():
-    return render_template('index.html')
+# Save model and scalers
+joblib.dump(mlp, "mlp_model.pkl")
+joblib.dump(scaler_X, "scaler_X.save")
+joblib.dump(scaler_y, "scaler_y.save")
+--
 
-# -----------------------------
-# Endpoint: ดึง Sentinel-2 และ THEOS-style map tiles
-# -----------------------------
-@app.route('/get_map', methods=['POST'])
-def get_map():
-    start = request.json['start']
-    end = request.json['end']
+#indices.py
+import numpy as np
 
-    # Sentinel Reflectance
-    collection_ref = (ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
-                      .filterDate(start, end)
-                      .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
-                      .map(mask_s2_clouds_reflectance))
-    image_ref = collection_ref.mean()
+def calculate_indices(red, nir, blue=None, green=None, L=0.5):
+    """
+    คำนวณ NDVI, TNDVI, SR, SAVI, MSAVI2
+    """
+    red = np.array(red, dtype=float)
+    nir = np.array(nir, dtype=float)
 
-    vis_sentinel = {
-        'bands': ['B4', 'B3', 'B2'],
-        'min': 0,
-        'max': 100,
-        'gamma': 1.0
+    ndvi = (nir - red) / (nir + red + 1e-6)
+    tndvi = np.sqrt(np.clip(ndvi + 0.5, a_min=0.0, a_max=None))
+    sr = nir / (red + 1e-6)
+    savi = ((1 + L) * (nir - red)) / (nir + red + L + 1e-6)
+    msavi2 = (2 * nir + 1 - np.sqrt((2 * nir + 1) ** 2 - 8 * (nir - red))) / 2
+
+    return {
+        "NDVI": float(np.nanmean(ndvi)),
+        "TNDVI": float(np.nanmean(tndvi)),
+        "SR": float(np.nanmean(sr)),
+        "SAVI": float(np.nanmean(savi)),
+        "MSAVI2": float(np.nanmean(msavi2)),
     }
-    map_id_sentinel = ee.Image(image_ref).getMapId(vis_sentinel)
+--
 
-    # THEOS-style DN
-    collection_dn = (ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
-                     .filterDate(start, end)
-                     .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
-                     .map(mask_s2_clouds_dn))
-    image_dn = collection_dn.mean()
-
-    vis_theos = {
-        'bands': ['B4', 'B3', 'B2'],
-        'min': 0,
-        'max': 100,
-        'gamma': 1.0
-    }
-    map_id_theos = ee.Image(image_dn).getMapId(vis_theos)
-
-    return jsonify({
-        'sentinel_url': map_id_sentinel['tile_fetcher'].url_format,
-        'theos_url': map_id_theos['tile_fetcher'].url_format
-    })
-
-# -----------------------------
-# Endpoint: ดึงค่า Pixel Reflectance 0–100
-# -----------------------------
-@app.route('/get_pixel', methods=['POST'])
-def get_pixel():
-    lat = float(request.json['lat'])
-    lon = float(request.json['lon'])
-    start = request.json['start']
-    end = request.json['end']
-
-    point = ee.Geometry.Point([lon, lat])
-
-    collection = (ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
-                  .filterDate(start, end)
-                  .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
-                  .map(mask_s2_clouds_reflectance))
-
-    image = collection.mean()
-
-    bands = image.reduceRegion(
-        reducer=ee.Reducer.first(),
-        geometry=point,
-        scale=10
-    )
-
-    return jsonify(bands.getInfo())
-
-# -----------------------------
-if __name__ == '__main__':
-    app.run(debug=True)
