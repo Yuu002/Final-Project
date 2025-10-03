@@ -6,31 +6,23 @@ from sklearn.neural_network import MLPRegressor
 import joblib
 
 def train_mlp_model():
-    # Load dataset
     data = pd.read_csv("bands_extracted.csv")
-
-    # X = Sentinel reflectance
     X = data[["Band1", "Band2", "Band3", "Band4"]].values
-    # y = Field reflectance
     y = data[["Blue (B1)", "Green (B2)", "Red (B3)", "NIR (B4)"]].values
 
-    # Scale
     scaler_X = StandardScaler()
     X_scaled = scaler_X.fit_transform(X)
 
     scaler_y = StandardScaler()
     y_scaled = scaler_y.fit_transform(y)
 
-    # Train/test split
     X_train, X_test, y_train, y_test = train_test_split(
         X_scaled, y_scaled, test_size=0.2, random_state=42
     )
 
-    # Train MLP
     mlp = MLPRegressor(hidden_layer_sizes=(64,64,32), max_iter=500, random_state=42)
     mlp.fit(X_train, y_train)
 
-    # Save model & scalers
     joblib.dump(mlp, "mlp_model.pkl")
     joblib.dump(scaler_X, "scaler_X.save")
     joblib.dump(scaler_y, "scaler_y.save")
@@ -41,31 +33,13 @@ def load_mlp_model():
     scaler_X = joblib.load("scaler_X.save")
     scaler_y = joblib.load("scaler_y.save")
     return mlp, scaler_X, scaler_y
+
+# ✅ เพิ่มส่วนนี้
+if __name__ == "__main__":
+    train_mlp_model()
+
 --
-# indices.py
-import numpy as np
 
-def calculate_indices(red, nir, blue=None, green=None, L=0.5):
-    """
-    คำนวณ NDVI, TNDVI, SR, SAVI, MSAVI2
-    """
-    red = np.array(red, dtype=float)
-    nir = np.array(nir, dtype=float)
-
-    ndvi = (nir - red) / (nir + red + 1e-6)
-    tndvi = np.sqrt(np.clip(ndvi + 0.5, a_min=0.0, a_max=None))
-    sr = nir / (red + 1e-6)
-    savi = ((1 + L) * (nir - red)) / (nir + red + L + 1e-6)
-    msavi2 = (2 * nir + 1 - np.sqrt((2 * nir + 1) ** 2 - 8 * (nir - red))) / 2
-
-    return {
-        "NDVI": float(np.nanmean(ndvi)),
-        "TNDVI": float(np.nanmean(tndvi)),
-        "SR": float(np.nanmean(sr)),
-        "SAVI": float(np.nanmean(savi)),
-        "MSAVI2": float(np.nanmean(msavi2)),
-    }
---
 # svr_model.py
 import pandas as pd
 from sklearn.svm import SVR
@@ -74,20 +48,16 @@ from sklearn.model_selection import train_test_split
 import joblib
 
 def train_svr_model():
-    # Load training data (ต้องมีไฟล์ indices_agb.csv ที่เก็บค่า indices + AGB จริง)
-    data = pd.read_csv("indices_agb.csv")
-
+    data = pd.read_csv("indices_agb.csv")  # ต้องมีไฟล์จริง
     X = data[["NDVI", "TNDVI", "SR", "SAVI", "MSAVI2"]].values
     y = data["AGB"].values
 
-    # Scale
     scaler_X = StandardScaler()
     X_scaled = scaler_X.fit_transform(X)
 
     scaler_y = StandardScaler()
     y_scaled = scaler_y.fit_transform(y.reshape(-1,1)).ravel()
 
-    # Train/test split
     X_train, X_test, y_train, y_test = train_test_split(
         X_scaled, y_scaled, test_size=0.2, random_state=42
     )
@@ -95,7 +65,6 @@ def train_svr_model():
     svr = SVR(kernel="rbf")
     svr.fit(X_train, y_train)
 
-    # Save
     joblib.dump(svr, "svr_agb_model.pkl")
     joblib.dump(scaler_X, "svr_scaler_X.save")
     joblib.dump(scaler_y, "svr_scaler_y.save")
@@ -106,7 +75,11 @@ def load_svr_model():
     scaler_X = joblib.load("svr_scaler_X.save")
     scaler_y = joblib.load("svr_scaler_y.save")
     return svr, scaler_X, scaler_y
----
+
+# ✅ เพิ่มส่วนนี้
+if __name__ == "__main__":
+    train_svr_model()
+--
 from flask import Flask, render_template, request, jsonify
 import ee
 import numpy as np
@@ -197,47 +170,31 @@ def process_pixel():
 if __name__ == '__main__':
     app.run(debug=True)
 --
-<!DOCTYPE html>
-<html>
-<head>
-  <title>AGB Estimation</title>
-</head>
-<body>
-  <h2>🌿 AGB Estimation System</h2>
-  <form id="pixelForm">
-    <label>Lat: <input type="text" id="lat" value="18.0"></label>
-    <label>Lon: <input type="text" id="lon" value="100.0"></label>
-    <label>Start: <input type="date" id="start" value="2020-01-01"></label>
-    <label>End: <input type="date" id="end" value="2020-01-15"></label>
-    <button type="submit">Process</button>
-  </form>
 
-  <pre id="output"></pre>
+# indices.py
+import numpy as np
 
-  <script>
-    document.getElementById("pixelForm").addEventListener("submit", async function(e){
-      e.preventDefault();
-      const lat = document.getElementById("lat").value;
-      const lon = document.getElementById("lon").value;
-      const start = document.getElementById("start").value;
-      const end = document.getElementById("end").value;
+def calculate_indices(red, nir, blue=None, green=None, L=0.5):
+    """
+    คำนวณ NDVI, TNDVI, SR, SAVI, MSAVI2
+    """
+    red = np.array(red, dtype=float)
+    nir = np.array(nir, dtype=float)
 
-      const res = await fetch("/process_pixel", {
-        method: "POST",
-        headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({lat, lon, start, end})
-      });
+    ndvi = (nir - red) / (nir + red + 1e-6)
+    tndvi = np.sqrt(np.clip(ndvi + 0.5, a_min=0.0, a_max=None))
+    sr = nir / (red + 1e-6)
+    savi = ((1 + L) * (nir - red)) / (nir + red + L + 1e-6)
+    msavi2 = (2 * nir + 1 - np.sqrt((2 * nir + 1) ** 2 - 8 * (nir - red))) / 2
 
-      const data = await res.json();
-      document.getElementById("output").textContent = JSON.stringify(data, null, 2);
-    });
-  </script>
-</body>
-</html>
+    return {
+        "NDVI": float(np.nanmean(ndvi)),
+        "TNDVI": float(np.nanmean(tndvi)),
+        "SR": float(np.nanmean(sr)),
+        "SAVI": float(np.nanmean(savi)),
+        "MSAVI2": float(np.nanmean(msavi2)),
+    }
+
 --
-flask
-earthengine-api
-joblib
-numpy
-scikit-learn
-pandas
+
+
