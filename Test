@@ -1,21 +1,20 @@
 import pandas as pd
 import pickle
-from sklearn.svm import SVR
+from sklearn.neural_network import MLPRegressor
 from sklearn.preprocessing import StandardScaler
 
 # -------------------------------------------------
-# 1. โหลดข้อมูลจาก Excel
+# 1. โหลดข้อมูลจาก CSV
 # -------------------------------------------------
-# สมมติว่าไฟล์ชื่อ dataset.xlsx และ sheet แรกมีข้อมูล
-# X = ค่าดัชนีพืชพรรณ (NDVI, TNDVI, SR, SAVI, MSAVI2)
-# y = ค่ามวลชีวภาพเหนือพื้นดิน (AGB)
+# dataset.csv ต้องมีคอลัมน์: Blue, Green, Red, NIR (หรือชื่อ band ที่คุณใช้จริง)
+# และคอลัมน์ target เช่น "Field_Reflectance" (ค่าการสะท้อนแสงภาคสนาม)
 # -------------------------------------------------
 
-df = pd.read_excel("dataset.xlsx")
+df = pd.read_csv("dataset.csv")
 
-# ปรับชื่อตามคอลัมน์จริงในไฟล์
-X = df[["NDVI", "TNDVI", "SR", "SAVI", "MSAVI2"]].values
-y = df["AGB"].values
+# Features และ Target
+X = df[["Blue", "Green", "Red", "NIR"]].values   # 👈 ปรับชื่อตาม dataset จริง
+y = df["Field_Reflectance"].values               # 👈 ปรับชื่อตาม dataset จริง
 
 # -------------------------------------------------
 # 2. เตรียม Scaler
@@ -27,21 +26,26 @@ X_scaled = scaler_X.fit_transform(X)
 y_scaled = scaler_y.fit_transform(y.reshape(-1, 1))
 
 # -------------------------------------------------
-# 3. เทรนโมเดล SVR
+# 3. เทรน MLP
 # -------------------------------------------------
-svr_model = SVR(kernel='rbf', C=100, gamma=0.1, epsilon=0.1)
-svr_model.fit(X_scaled, y_scaled.ravel())
+mlp_model = MLPRegressor(hidden_layer_sizes=(64,64,32),
+                         activation='relu',
+                         solver='adam',
+                         max_iter=500,
+                         random_state=42)
+
+mlp_model.fit(X_scaled, y_scaled.ravel())
 
 # -------------------------------------------------
 # 4. เซฟไฟล์โมเดลและ Scaler
 # -------------------------------------------------
-with open("models/svr_agb_model.pkl", "wb") as f:
-    pickle.dump(svr_model, f)
+with open("models/mlp_model.pkl", "wb") as f:
+    pickle.dump(mlp_model, f)
 
-with open("models/svr_scaler_X.save", "wb") as f:
+with open("models/scaler_X.save", "wb") as f:
     pickle.dump(scaler_X, f)
 
-with open("models/svr_scaler_y.save", "wb") as f:
+with open("models/scaler_y.save", "wb") as f:
     pickle.dump(scaler_y, f)
 
-print("✅ SVR model and scalers saved to 'models/'")
+print("✅ MLP model and scalers saved to 'models/'")
