@@ -1,117 +1,16 @@
-from flask import Flask, render_template, request, jsonify
-import ee
-import numpy as np
-import joblib
-from indices import calculate_indices
+#indices.py
+def calculate_indices(blue, green, red, nir):
+    """คำนวณดัชนีพืชพรรณหลัก 5 ค่า"""
+    ndvi = (nir - red) / (nir + red) if (nir + red) != 0 else 0
+    tndvi = ((nir - red) / (nir + red) + 0.5) ** 0.5 if (nir + red) != 0 else 0
+    sr = nir / red if red != 0 else 0
+    savi = ((nir - red) / (nir + red + 0.5)) * 1.5 if (nir + red + 0.5) != 0 else 0
+    msavi2 = (2 * nir + 1 - ((2 * nir + 1) ** 2 - 8 * (nir - red)) ** 0.5) / 2 if (nir - red) >= 0 else 0
 
-# Initialize Earth Engine
-ee.Initialize(project='map-web-473508')
-
-app = Flask(__name__)
-
-# โหลดโมเดล MLP + SVR และ scalers
-mlp = joblib.load("mlp_model.pkl")
-scaler_X = joblib.load("scaler_X.save")
-scaler_y = joblib.load("scaler_y.save")
-
-svr = joblib.load("svr_agb_model.pkl")
-svr_scaler_X = joblib.load("svr_scaler_X.save")
-svr_scaler_y = joblib.load("svr_scaler_y.save")
-
-# -----------------------------
-# Cloud Mask Function (Sentinel-2 SR → Reflectance 0–100)
-# -----------------------------
-def mask_s2_clouds_reflectance(image):
-    qa = image.select('QA60')
-    cloud_bit_mask = 1 << 10
-    cirrus_bit_mask = 1 << 11
-    mask = qa.bitwiseAnd(cloud_bit_mask).eq(0) \
-           .And(qa.bitwiseAnd(cirrus_bit_mask).eq(0))
-    reflectance = image.divide(10000).multiply(100)
-    return reflectance.updateMask(mask)
-
-# -----------------------------
-@app.route('/')
-def index():
-    return render_template('index.html')
-
-# -----------------------------
-@app.route('/get_pixel', methods=['POST'])
-def get_pixel():
-    lat = float(request.json['lat'])
-    lon = float(request.json['lon'])
-    start = request.json['start']
-    end = request.json['end']
-
-    point = ee.Geometry.Point([lon, lat])
-
-    collection = (ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
-                  .filterDate(start, end)
-                  .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
-                  .map(mask_s2_clouds_reflectance))
-
-    image = collection.mean()
-
-    bands = image.reduceRegion(
-        reducer=ee.Reducer.first(),
-        geometry=point,
-        scale=10
-    ).getInfo()
-
-    # --- MLP predict field reflectance ---
-    X_input = np.array([[bands['B2'], bands['B3'], bands['B4'], bands['B8']]])  # Blue, Green, Red, NIR
-    X_scaled = scaler_X.transform(X_input)
-    field_reflectance_scaled = mlp.predict(X_scaled)
-    field_reflectance = scaler_y.inverse_transform(field_reflectance_scaled)
-
-    blue_field, green_field, red_field, nir_field = field_reflectance[0]
-
-    # --- Calculate indices (ใช้ Red & NIR แบบ field) ---
-    indices = calculate_indices(red_field, nir_field, blue_field, green_field)
-
-    # --- Predict AGB ---
-    X_indices = np.array([[indices["NDVI"], indices["TNDVI"], indices["SR"], indices["SAVI"], indices["MSAVI2"]]])
-    X_indices_scaled = svr_scaler_X.transform(X_indices)
-    agb_scaled = svr.predict(X_indices_scaled)
-    agb = svr_scaler_y.inverse_transform(agb_scaled.reshape(-1,1))[0][0]
-
-    return jsonify({
-        "field_reflectance": {
-            "Blue": float(blue_field),
-            "Green": float(green_field),
-            "Red": float(red_field),
-            "NIR": float(nir_field)
-        },
-        "indices": indices,
-        "AGB": float(agb),
-        "satellite_bands": {
-            "B2": float(bands['B2']),
-            "B3": float(bands['B3']),
-            "B4": float(bands['B4']),
-            "B8": float(bands['B8'])
-        }
-    })
-
-if __name__ == '__main__':
-    app.run(debug=True)
-
---
-
-<hr>
-<h4>Field Reflectance (MLP)</h4>
-<p id="field_blue">Blue: -</p>
-<p id="field_green">Green: -</p>
-<p id="field_red">Red: -</p>
-<p id="field_nir">NIR: -</p>
-
-<hr>
-<h4>Vegetation Indices</h4>
-<p id="ndvi">NDVI: -</p>
-<p id="tndvi">TNDVI: -</p>
-<p id="sr">SR: -</p>
-<p id="savi">SAVI: -</p>
-<p id="msavi2">MSAVI2: -</p>
-
-<hr>
-<h4>Estimated AGB</h4>
-<p id="agb">AGB: -</p>
+    return {
+        "NDVI": ndvi,
+        "TNDVI": tndvi,
+        "SR": sr,
+        "SAVI": savi,
+        "MSAVI2": msavi2
+    }
