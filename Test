@@ -47,6 +47,7 @@ def get_pixel():
 
     point = ee.Geometry.Point([lon, lat])
 
+    # --- ดึงค่าพิกเซลจาก Sentinel-2 ---
     collection = (ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
                   .filterDate(start, end)
                   .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
@@ -65,19 +66,24 @@ def get_pixel():
     X_scaled = scaler_X.transform(X_input)
     field_reflectance_scaled = mlp.predict(X_scaled)
     field_reflectance = scaler_y.inverse_transform(field_reflectance_scaled)
-
     blue_field, green_field, red_field, nir_field = field_reflectance[0]
 
-    # --- Calculate indices (ใช้ Red & NIR แบบ field) ---
-    indices = calculate_indices(red_field, nir_field, blue_field, green_field)
+    # --- Calculate indices (Red & NIR แบบ field) ---
+    indices = calculate_indices(blue_field, green_field, red_field, nir_field)
 
-    # --- Predict AGB ---
+    # --- Predict AGB using SVR ---
     X_indices = np.array([[indices["NDVI"], indices["TNDVI"], indices["SR"], indices["SAVI"], indices["MSAVI2"]]])
     X_indices_scaled = svr_scaler_X.transform(X_indices)
     agb_scaled = svr.predict(X_indices_scaled)
     agb = svr_scaler_y.inverse_transform(agb_scaled.reshape(-1,1))[0][0]
 
     return jsonify({
+        "satellite_bands": {
+            "B2": float(bands['B2']),
+            "B3": float(bands['B3']),
+            "B4": float(bands['B4']),
+            "B8": float(bands['B8'])
+        },
         "field_reflectance": {
             "Blue": float(blue_field),
             "Green": float(green_field),
@@ -85,19 +91,15 @@ def get_pixel():
             "NIR": float(nir_field)
         },
         "indices": indices,
-        "AGB": float(agb),
-        "satellite_bands": {
-            "B2": float(bands['B2']),
-            "B3": float(bands['B3']),
-            "B4": float(bands['B4']),
-            "B8": float(bands['B8'])
-        }
+        "AGB": float(agb)
     })
 
+# -----------------------------
 if __name__ == '__main__':
     app.run(debug=True)
 
 --
+
 <!DOCTYPE html>
 <html>
 <head>
@@ -141,30 +143,26 @@ if __name__ == '__main__':
       <p><strong>Selected Point:</strong></p>
       <p id="coord">Lat: -, Lon: -</p>
       <hr>
-      <p><strong>Satellite Pixel Reflectance</strong></p>
-      <p id="red">Red (B4): -</p>
-      <p id="green">Green (B3): -</p>
-      <p id="blue">Blue (B2): -</p>
-      <p id="nir">NIR (B8): -</p>
-
+      <p><strong>Satellite Pixel Reflectance:</strong></p>
+      <p id="B2">B2 (Blue): -</p>
+      <p id="B3">B3 (Green): -</p>
+      <p id="B4">B4 (Red): -</p>
+      <p id="B8">B8 (NIR): -</p>
       <hr>
-      <p><strong>Field Reflectance (MLP)</strong></p>
-      <p id="field_red">Red: -</p>
-      <p id="field_green">Green: -</p>
-      <p id="field_blue">Blue: -</p>
-      <p id="field_nir">NIR: -</p>
-
+      <p><strong>Field Reflectance (MLP):</strong></p>
+      <p id="fBlue">Blue: -</p>
+      <p id="fGreen">Green: -</p>
+      <p id="fRed">Red: -</p>
+      <p id="fNIR">NIR: -</p>
       <hr>
-      <p><strong>Vegetation Indices</strong></p>
-      <p id="ndvi">NDVI: -</p>
-      <p id="tndvi">TNDVI: -</p>
-      <p id="sr">SR: -</p>
-      <p id="savi">SAVI: -</p>
-      <p id="msavi2">MSAVI2: -</p>
-
+      <p><strong>Vegetation Indices:</strong></p>
+      <p id="NDVI">NDVI: -</p>
+      <p id="TNDVI">TNDVI: -</p>
+      <p id="SR">SR: -</p>
+      <p id="SAVI">SAVI: -</p>
+      <p id="MSAVI2">MSAVI2: -</p>
       <hr>
-      <p><strong>Estimated AGB</strong></p>
-      <p id="agb">AGB: -</p>
+      <p><strong>Estimated AGB:</strong> <span id="AGB">-</span></p>
     </div>
   </div>
 
@@ -174,28 +172,41 @@ if __name__ == '__main__':
       attribution: '&copy; OpenStreetMap contributors'
     });
 
-    var maptilerHybrid = L.tileLayer('https://api.maptiler.com/maps/hybrid/{z}/{x}/{y}.png?key=SorpWvu9Cx7zkYKrxJbN', {
-      attribution: '&copy; MapTiler',
-      tileSize: 512,
-      zoomOffset: -1
+    var map = L.map('map', {
+      center: [19.2, 100.1],
+      zoom: 10,
+      layers: [osm]
     });
 
-    var map = L.map('map', { center: [19.2, 100.1], zoom: 10, layers: [osm] });
-    var baseMaps = { "OpenStreetMap": osm, "MapTiler Hybrid": maptilerHybrid };
-    var overlayMaps = {};
-    var layerControl = L.control.layers(baseMaps, overlayMaps, {collapsed: false}).addTo(map);
-
-    var s2layer = {}; // เก็บ Sentinel และ THEOS
+    var s2layer = {};
     var marker;
+
+    document.getElementById('loadMap').onclick = async function() {
+      let start = document.getElementById('start').value;
+      let end = document.getElementById('end').value;
+
+      let resp = await fetch('/get_map', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({start, end})
+      });
+      let data = await resp.json();
+
+      if(s2layer.sentinel) {
+        map.removeLayer(s2layer.sentinel);
+        map.removeLayer(s2layer.theos);
+      }
+
+      let sentinelLayer = L.tileLayer(data.sentinel_url).addTo(map);
+      let theosLayer = L.tileLayer(data.theos_url);
+
+      s2layer = { sentinel: sentinelLayer, theos: theosLayer };
+    };
 
     function showMarker(lat, lon) {
       if(marker) map.removeLayer(marker);
       marker = L.marker([lat, lon]).addTo(map);
       marker.bindPopup(`Lat: ${lat.toFixed(6)}, Lon: ${lon.toFixed(6)}`).openPopup();
-    }
-
-    function formatVal(val) {
-      return (val !== null && val !== undefined) ? Number(val).toFixed(5) : '-';
     }
 
     async function getPixelData(lat, lon, start, end) {
@@ -204,26 +215,26 @@ if __name__ == '__main__':
         headers:{'Content-Type':'application/json'},
         body: JSON.stringify({lat, lon, start, end})
       });
-      let pixel = await resp.json();
+      let data = await resp.json();
 
       document.getElementById('coord').innerText = `Lat: ${lat}, Lon: ${lon}`;
-      document.getElementById('red').innerText   = `Red (B4): ${formatVal(pixel.satellite_bands.B4)}`;
-      document.getElementById('green').innerText = `Green (B3): ${formatVal(pixel.satellite_bands.B3)}`;
-      document.getElementById('blue').innerText  = `Blue (B2): ${formatVal(pixel.satellite_bands.B2)}`;
-      document.getElementById('nir').innerText   = `NIR (B8): ${formatVal(pixel.satellite_bands.B8)}`;
+      document.getElementById('B2').innerText = `B2 (Blue): ${data.satellite_bands.B2.toFixed(5)}`;
+      document.getElementById('B3').innerText = `B3 (Green): ${data.satellite_bands.B3.toFixed(5)}`;
+      document.getElementById('B4').innerText = `B4 (Red): ${data.satellite_bands.B4.toFixed(5)}`;
+      document.getElementById('B8').innerText = `B8 (NIR): ${data.satellite_bands.B8.toFixed(5)}`;
 
-      document.getElementById('field_red').innerText   = `Red: ${formatVal(pixel.field_reflectance.Red)}`;
-      document.getElementById('field_green').innerText = `Green: ${formatVal(pixel.field_reflectance.Green)}`;
-      document.getElementById('field_blue').innerText  = `Blue: ${formatVal(pixel.field_reflectance.Blue)}`;
-      document.getElementById('field_nir').innerText   = `NIR: ${formatVal(pixel.field_reflectance.NIR)}`;
+      document.getElementById('fBlue').innerText = `Blue: ${data.field_reflectance.Blue.toFixed(5)}`;
+      document.getElementById('fGreen').innerText = `Green: ${data.field_reflectance.Green.toFixed(5)}`;
+      document.getElementById('fRed').innerText = `Red: ${data.field_reflectance.Red.toFixed(5)}`;
+      document.getElementById('fNIR').innerText = `NIR: ${data.field_reflectance.NIR.toFixed(5)}`;
 
-      document.getElementById('ndvi').innerText   = `NDVI: ${formatVal(pixel.indices.NDVI)}`;
-      document.getElementById('tndvi').innerText  = `TNDVI: ${formatVal(pixel.indices.TNDVI)}`;
-      document.getElementById('sr').innerText     = `SR: ${formatVal(pixel.indices.SR)}`;
-      document.getElementById('savi').innerText   = `SAVI: ${formatVal(pixel.indices.SAVI)}`;
-      document.getElementById('msavi2').innerText = `MSAVI2: ${formatVal(pixel.indices.MSAVI2)}`;
+      document.getElementById('NDVI').innerText = `NDVI: ${data.indices.NDVI.toFixed(5)}`;
+      document.getElementById('TNDVI').innerText = `TNDVI: ${data.indices.TNDVI.toFixed(5)}`;
+      document.getElementById('SR').innerText = `SR: ${data.indices.SR.toFixed(5)}`;
+      document.getElementById('SAVI').innerText = `SAVI: ${data.indices.SAVI.toFixed(5)}`;
+      document.getElementById('MSAVI2').innerText = `MSAVI2: ${data.indices.MSAVI2.toFixed(5)}`;
 
-      document.getElementById('agb').innerText     = `AGB: ${formatVal(pixel.AGB)}`;
+      document.getElementById('AGB').innerText = data.AGB.toFixed(5);
     }
 
     document.getElementById('getPixel').onclick = async function() {
@@ -231,7 +242,12 @@ if __name__ == '__main__':
       let lon = parseFloat(document.getElementById('lon').value);
       let start = document.getElementById('start').value;
       let end = document.getElementById('end').value;
-      if(isNaN(lat) || isNaN(lon)) { alert("Please enter valid coordinates!"); return; }
+
+      if(isNaN(lat) || isNaN(lon)) {
+        alert("Please enter valid coordinates!");
+        return;
+      }
+
       map.setView([lat, lon], 14);
       showMarker(lat, lon);
       await getPixelData(lat, lon, start, end);
@@ -242,7 +258,9 @@ if __name__ == '__main__':
       let lon = e.latlng.lng;
       document.getElementById('lat').value = lat.toFixed(6);
       document.getElementById('lon').value = lon.toFixed(6);
+
       showMarker(lat, lon);
+
       let start = document.getElementById('start').value;
       let end = document.getElementById('end').value;
       await getPixelData(lat, lon, start, end);
