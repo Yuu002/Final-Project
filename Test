@@ -1,51 +1,56 @@
+#mlp_model.py
 import pandas as pd
-import pickle
+import numpy as np
+from sklearn.model_selection import train_test_split
 from sklearn.neural_network import MLPRegressor
 from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
+import joblib
 
-# -------------------------------------------------
-# 1. โหลดข้อมูลจาก CSV
-# -------------------------------------------------
-# dataset.csv ต้องมีคอลัมน์: Blue, Green, Red, NIR (หรือชื่อ band ที่คุณใช้จริง)
-# และคอลัมน์ target เช่น "Field_Reflectance" (ค่าการสะท้อนแสงภาคสนาม)
-# -------------------------------------------------
+# -----------------------------
+# โหลด dataset
+# -----------------------------
+data = pd.read_excel("bands_extracted.xlsx")  
+# ต้องมี columns: Blue_sat, Green_sat, Red_sat, NIR_sat, Blue_field, Green_field, Red_field, NIR_field
 
-df = pd.read_csv("dataset.csv")
+X = data[['Band1', 'Band2', 'Band3', 'Band4']].values
+y = data[['Blue (B1)', 'Green (B2)', 'Red (B3)', 'NIR (B4)']].values
 
-# Features และ Target
-X = df[["Blue", "Green", "Red", "NIR"]].values   # 👈 ปรับชื่อตาม dataset จริง
-y = df["Field_Reflectance"].values               # 👈 ปรับชื่อตาม dataset จริง
+# -----------------------------
+# Train-Test Split
+# -----------------------------
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
-# -------------------------------------------------
-# 2. เตรียม Scaler
-# -------------------------------------------------
+# -----------------------------
+# Scaling
+# -----------------------------
 scaler_X = StandardScaler()
 scaler_y = StandardScaler()
+X_train_scaled = scaler_X.fit_transform(X_train)
+y_train_scaled = scaler_y.fit_transform(y_train)
 
-X_scaled = scaler_X.fit_transform(X)
-y_scaled = scaler_y.fit_transform(y.reshape(-1, 1))
+# -----------------------------
+# สร้าง MLP
+# -----------------------------
+mlp = MLPRegressor(hidden_layer_sizes=(64, 64, 32), activation='relu', solver='adam', max_iter=500, random_state=42)
+mlp.fit(X_train_scaled, y_train_scaled)
 
-# -------------------------------------------------
-# 3. เทรน MLP
-# -------------------------------------------------
-mlp_model = MLPRegressor(hidden_layer_sizes=(64,64,32),
-                         activation='relu',
-                         solver='adam',
-                         max_iter=500,
-                         random_state=42)
+# -----------------------------
+# Evaluate
+# -----------------------------
+X_test_scaled = scaler_X.transform(X_test)
+y_pred_scaled = mlp.predict(X_test_scaled)
+y_pred = scaler_y.inverse_transform(y_pred_scaled)
 
-mlp_model.fit(X_scaled, y_scaled.ravel())
+print("MLP R²:", r2_score(y_test, y_pred))
+print("MLP RMSE:", mean_squared_error(y_test, y_pred, squared=False))
+print("MLP MAE:", mean_absolute_error(y_test, y_pred))
 
-# -------------------------------------------------
-# 4. เซฟไฟล์โมเดลและ Scaler
-# -------------------------------------------------
-with open("models/mlp_model.pkl", "wb") as f:
-    pickle.dump(mlp_model, f)
+# -----------------------------
+# Save model + scalers
+# -----------------------------
+joblib.dump(mlp, "mlp_model.pkl")
+joblib.dump(scaler_X, "scaler_X.save")
+joblib.dump(scaler_y, "scaler_y.save")
 
-with open("models/scaler_X.save", "wb") as f:
-    pickle.dump(scaler_X, f)
-
-with open("models/scaler_y.save", "wb") as f:
-    pickle.dump(scaler_y, f)
-
-print("✅ MLP model and scalers saved to 'models/'")
+print("✅ Saved MLP model")
