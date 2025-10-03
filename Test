@@ -1,4 +1,4 @@
-#mlp_model.py
+# mlp_model.py (แก้ให้แล้ว)
 import pandas as pd
 import numpy as np
 from sklearn.model_selection import train_test_split
@@ -6,12 +6,13 @@ from sklearn.neural_network import MLPRegressor
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
 import joblib
+import sklearn
 
 # -----------------------------
 # โหลด dataset
 # -----------------------------
 data = pd.read_excel("bands_extracted.xlsx")  
-# ต้องมี columns: Blue_sat, Green_sat, Red_sat, NIR_sat, Blue_field, Green_field, Red_field, NIR_field
+# ต้องมี columns: Band1,Band2,Band3,Band4, Blue (B1), Green (B2), Red (B3), NIR (B4)
 
 X = data[['Band1', 'Band2', 'Band3', 'Band4']].values
 y = data[['Blue (B1)', 'Green (B2)', 'Red (B3)', 'NIR (B4)']].values
@@ -32,7 +33,11 @@ y_train_scaled = scaler_y.fit_transform(y_train)
 # -----------------------------
 # สร้าง MLP
 # -----------------------------
-mlp = MLPRegressor(hidden_layer_sizes=(64, 64, 32), activation='relu', solver='adam', max_iter=500, random_state=42)
+mlp = MLPRegressor(hidden_layer_sizes=(64, 64, 32),
+                   activation='relu',
+                   solver='adam',
+                   max_iter=500,
+                   random_state=42)
 mlp.fit(X_train_scaled, y_train_scaled)
 
 # -----------------------------
@@ -42,9 +47,14 @@ X_test_scaled = scaler_X.transform(X_test)
 y_pred_scaled = mlp.predict(X_test_scaled)
 y_pred = scaler_y.inverse_transform(y_pred_scaled)
 
-print("MLP R²:", r2_score(y_test, y_pred))
-print("MLP RMSE:", mean_squared_error(y_test, y_pred, squared=False))
-print("MLP MAE:", mean_absolute_error(y_test, y_pred))
+r2 = r2_score(y_test, y_pred)
+rmse = np.sqrt(mean_squared_error(y_test, y_pred))   # <-- แก้ตรงนี้ (ใช้ sqrt ของ MSE)
+mae = mean_absolute_error(y_test, y_pred)
+
+print("scikit-learn version:", sklearn.__version__)
+print("MLP R²:", r2)
+print("MLP RMSE:", rmse)
+print("MLP MAE:", mae)
 
 # -----------------------------
 # Save model + scalers
