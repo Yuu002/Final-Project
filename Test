@@ -1,321 +1,47 @@
-#app.py
-from flask import Flask, render_template, request, jsonify
-import numpy as np
-import joblib
-from indices import calculate_indices
-
-# -----------------------------
-# โหลดโมเดล MLP สำหรับ Field Reflectance
-# -----------------------------
-mlp_model = joblib.load("models/mlp_model.pkl")
-scaler_X = joblib.load("models/scaler_X.save")
-scaler_y = joblib.load("models/scaler_y.save")
-
-# -----------------------------
-# โหลดโมเดล SVR สำหรับ AGB
-# -----------------------------
-svr_model = joblib.load("models/svr_agb_model.pkl")
-svr_scaler_X = joblib.load("models/svr_scaler_X.save")
-svr_scaler_y = joblib.load("models/svr_scaler_y.save")
-
-# -----------------------------
-# สร้าง Flask app
-# -----------------------------
-app = Flask(__name__)
-
-@app.route('/')
-def home():
-    return render_template('index.html')
-
-@app.route('/predict_reflectance', methods=['POST'])
-def predict_reflectance():
-    try:
-        blue = float(request.form['blue'])
-        green = float(request.form['green'])
-        red = float(request.form['red'])
-        nir = float(request.form['nir'])
-
-        # เตรียม input
-        X_input = np.array([[blue, green, red, nir]])
-        X_scaled = scaler_X.transform(X_input)
-
-        # พยากรณ์ด้วย MLP
-        y_pred_scaled = mlp_model.predict(X_scaled)
-        y_pred = scaler_y.inverse_transform(y_pred_scaled)
-
-        result = {
-            "Blue_field": float(y_pred[0][0]),
-            "Green_field": float(y_pred[0][1]),
-            "Red_field": float(y_pred[0][2]),
-            "NIR_field": float(y_pred[0][3]),
-        }
-        return jsonify(result)
-
-    except Exception as e:
-        return jsonify({"error": str(e)})
-
-
-@app.route('/predict_agb', methods=['POST'])
-def predict_agb():
-    try:
-        # รับค่าจากฟอร์ม
-        blue_field = float(request.form['blue_field'])
-        green_field = float(request.form['green_field'])
-        red_field = float(request.form['red_field'])
-        nir_field = float(request.form['nir_field'])
-
-        # คำนวณดัชนีพืชพรรณ
-        indices = calculate_indices(blue_field, green_field, red_field, nir_field)
-        X_input = np.array([[indices['NDVI'], indices['TNDVI'], indices['SR'], indices['SAVI'], indices['MSAVI2']]])
-        X_scaled = svr_scaler_X.transform(X_input)
-
-        # พยากรณ์ AGB
-        y_pred_scaled = svr_model.predict(X_scaled).reshape(-1, 1)
-        y_pred = svr_scaler_y.inverse_transform(y_pred_scaled)
-
-        result = {
-            "AGB_ton_ha": float(y_pred[0][0]),
-            "indices": indices
-        }
-        return jsonify(result)
-
-    except Exception as e:
-        return jsonify({"error": str(e)})
-
-
-if __name__ == '__main__':
-    app.run(debug=True)
-
---
-
-#indices.py
-def calculate_indices(blue, green, red, nir):
-    """คำนวณดัชนีพืชพรรณหลัก 5 ค่า"""
-    ndvi = (nir - red) / (nir + red) if (nir + red) != 0 else 0
-    tndvi = ((nir - red) / (nir + red) + 0.5) ** 0.5 if (nir + red) != 0 else 0
-    sr = nir / red if red != 0 else 0
-    savi = ((nir - red) / (nir + red + 0.5)) * 1.5 if (nir + red + 0.5) != 0 else 0
-    msavi2 = (2 * nir + 1 - ((2 * nir + 1) ** 2 - 8 * (nir - red)) ** 0.5) / 2 if (nir - red) >= 0 else 0
-
-    return {
-        "NDVI": ndvi,
-        "TNDVI": tndvi,
-        "SR": sr,
-        "SAVI": savi,
-        "MSAVI2": msavi2
-    }
---
-
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <title>🌱 AGB Prediction</title>
-    <style>
-        body { font-family: Arial, sans-serif; margin: 40px; }
-        input { margin: 5px; padding: 5px; width: 120px; }
-        button { padding: 8px 16px; margin-top: 10px; }
-        .result { margin-top: 20px; padding: 15px; border: 1px solid #ccc; width: 400px; }
-    </style>
-</head>
-<body>
-    <h2>🌾 Predict Field Reflectance & AGB</h2>
-
-    <!-- ฟอร์มพยากรณ์ค่าการสะท้อนแสงภาคสนาม -->
-    <h3>Step 1: Predict Field Reflectance</h3>
-    <form id="reflectanceForm">
-        <label>Blue (sat):</label>
-        <input type="number" step="0.0001" name="blue" required><br>
-        <label>Green (sat):</label>
-        <input type="number" step="0.0001" name="green" required><br>
-        <label>Red (sat):</label>
-        <input type="number" step="0.0001" name="red" required><br>
-        <label>NIR (sat):</label>
-        <input type="number" step="0.0001" name="nir" required><br>
-        <button type="submit">Predict Reflectance</button>
-    </form>
-
-    <div class="result" id="reflectanceResult" style="display:none;">
-        <h4>Predicted Field Reflectance</h4>
-        <p id="blue_field"></p>
-        <p id="green_field"></p>
-        <p id="red_field"></p>
-        <p id="nir_field"></p>
-    </div>
-
-    <!-- ฟอร์มพยากรณ์ AGB -->
-    <h3>Step 2: Predict AGB</h3>
-    <form id="agbForm" style="display:none;">
-        <input type="hidden" name="blue_field">
-        <input type="hidden" name="green_field">
-        <input type="hidden" name="red_field">
-        <input type="hidden" name="nir_field">
-        <button type="submit">Predict AGB</button>
-    </form>
-
-    <div class="result" id="agbResult" style="display:none;">
-        <h4>Predicted AGB (tons/ha)</h4>
-        <p id="agb_value"></p>
-        <h5>Calculated Indices</h5>
-        <p id="indices"></p>
-    </div>
-
-    <script>
-        // Step 1: Predict Reflectance
-        document.getElementById("reflectanceForm").addEventListener("submit", async function(e) {
-            e.preventDefault();
-            let formData = new FormData(this);
-            let response = await fetch("/predict_reflectance", { method: "POST", body: formData });
-            let result = await response.json();
-
-            if(result.error){
-                alert("Error: " + result.error);
-            } else {
-                document.getElementById("reflectanceResult").style.display = "block";
-                document.getElementById("blue_field").innerText = "Blue (field): " + result.Blue_field.toFixed(4);
-                document.getElementById("green_field").innerText = "Green (field): " + result.Green_field.toFixed(4);
-                document.getElementById("red_field").innerText = "Red (field): " + result.Red_field.toFixed(4);
-                document.getElementById("nir_field").innerText = "NIR (field): " + result.NIR_field.toFixed(4);
-
-                // เติมค่าเข้า hidden form สำหรับ AGB
-                document.querySelector("#agbForm input[name='blue_field']").value = result.Blue_field;
-                document.querySelector("#agbForm input[name='green_field']").value = result.Green_field;
-                document.querySelector("#agbForm input[name='red_field']").value = result.Red_field;
-                document.querySelector("#agbForm input[name='nir_field']").value = result.NIR_field;
-
-                document.getElementById("agbForm").style.display = "block";
-            }
-        });
-
-        // Step 2: Predict AGB
-        document.getElementById("agbForm").addEventListener("submit", async function(e) {
-            e.preventDefault();
-            let formData = new FormData(this);
-            let response = await fetch("/predict_agb", { method: "POST", body: formData });
-            let result = await response.json();
-
-            if(result.error){
-                alert("Error: " + result.error);
-            } else {
-                document.getElementById("agbResult").style.display = "block";
-                document.getElementById("agb_value").innerText = result.AGB_ton_ha.toFixed(2);
-                document.getElementById("indices").innerText = JSON.stringify(result.indices, null, 2);
-            }
-        });
-    </script>
-</body>
-</html>
---
-#mlp_model.py
 import pandas as pd
-import numpy as np
-from sklearn.model_selection import train_test_split
-from sklearn.neural_network import MLPRegressor
-from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
-import joblib
-
-# -----------------------------
-# โหลด dataset
-# -----------------------------
-data = pd.read_excel("reflectance_dataset.xlsx")  
-# ต้องมี columns: Blue_sat, Green_sat, Red_sat, NIR_sat, Blue_field, Green_field, Red_field, NIR_field
-
-X = data[['Blue_sat', 'Green_sat', 'Red_sat', 'NIR_sat']].values
-y = data[['Blue_field', 'Green_field', 'Red_field', 'NIR_field']].values
-
-# -----------------------------
-# Train-Test Split
-# -----------------------------
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-
-# -----------------------------
-# Scaling
-# -----------------------------
-scaler_X = StandardScaler()
-scaler_y = StandardScaler()
-X_train_scaled = scaler_X.fit_transform(X_train)
-y_train_scaled = scaler_y.fit_transform(y_train)
-
-# -----------------------------
-# สร้าง MLP
-# -----------------------------
-mlp = MLPRegressor(hidden_layer_sizes=(64, 64, 32), activation='relu', solver='adam', max_iter=500, random_state=42)
-mlp.fit(X_train_scaled, y_train_scaled)
-
-# -----------------------------
-# Evaluate
-# -----------------------------
-X_test_scaled = scaler_X.transform(X_test)
-y_pred_scaled = mlp.predict(X_test_scaled)
-y_pred = scaler_y.inverse_transform(y_pred_scaled)
-
-print("MLP R²:", r2_score(y_test, y_pred))
-print("MLP RMSE:", mean_squared_error(y_test, y_pred, squared=False))
-print("MLP MAE:", mean_absolute_error(y_test, y_pred))
-
-# -----------------------------
-# Save model + scalers
-# -----------------------------
-joblib.dump(mlp, "models/mlp_model.pkl")
-joblib.dump(scaler_X, "models/scaler_X.save")
-joblib.dump(scaler_y, "models/scaler_y.save")
-
-print("✅ Saved MLP model to models/")
---
-# svr_model.py
-import pandas as pd
-import numpy as np
-from sklearn.model_selection import train_test_split
+import pickle
 from sklearn.svm import SVR
 from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
-import joblib
 
-# -----------------------------
-# โหลด dataset
-# -----------------------------
-data = pd.read_excel("agb_dataset.xlsx")  
-# ต้องมี columns: NDVI, TNDVI, SR, SAVI, MSAVI2, AGB
+# -------------------------------------------------
+# 1. โหลดข้อมูลจาก Excel
+# -------------------------------------------------
+# สมมติว่าไฟล์ชื่อ dataset.xlsx และ sheet แรกมีข้อมูล
+# X = ค่าดัชนีพืชพรรณ (NDVI, TNDVI, SR, SAVI, MSAVI2)
+# y = ค่ามวลชีวภาพเหนือพื้นดิน (AGB)
+# -------------------------------------------------
 
-X = data[['NDVI', 'TNDVI', 'SR', 'SAVI', 'MSAVI2']].values
-y = data[['AGB']].values  # AGB เป็น target
+df = pd.read_excel("dataset.xlsx")
 
-# -----------------------------
-# Train-Test Split
-# -----------------------------
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+# ปรับชื่อตามคอลัมน์จริงในไฟล์
+X = df[["NDVI", "TNDVI", "SR", "SAVI", "MSAVI2"]].values
+y = df["AGB"].values
 
-# -----------------------------
-# Scaling
-# -----------------------------
+# -------------------------------------------------
+# 2. เตรียม Scaler
+# -------------------------------------------------
 scaler_X = StandardScaler()
 scaler_y = StandardScaler()
-X_train_scaled = scaler_X.fit_transform(X_train)
-y_train_scaled = scaler_y.fit_transform(y_train)
 
-# -----------------------------
-# สร้าง SVR
-# -----------------------------
-svr = SVR(kernel='rbf', C=100, gamma=0.1, epsilon=0.1)
-svr.fit(X_train_scaled, y_train_scaled.ravel())
+X_scaled = scaler_X.fit_transform(X)
+y_scaled = scaler_y.fit_transform(y.reshape(-1, 1))
 
-# -----------------------------
-# Evaluate
-# -----------------------------
-X_test_scaled = scaler_X.transform(X_test)
-y_pred_scaled = svr.predict(X_test_scaled).reshape(-1, 1)
-y_pred = scaler_y.inverse_transform(y_pred_scaled)
+# -------------------------------------------------
+# 3. เทรนโมเดล SVR
+# -------------------------------------------------
+svr_model = SVR(kernel='rbf', C=100, gamma=0.1, epsilon=0.1)
+svr_model.fit(X_scaled, y_scaled.ravel())
 
-print("SVR R²:", r2_score(y_test, y_pred))
-print("SVR RMSE:", mean_squared_error(y_test, y_pred, squared=False))
-print("SVR MAE:", mean_absolute_error(y_test, y_pred))
+# -------------------------------------------------
+# 4. เซฟไฟล์โมเดลและ Scaler
+# -------------------------------------------------
+with open("models/svr_agb_model.pkl", "wb") as f:
+    pickle.dump(svr_model, f)
 
-# -----------------------------
-# Save model + scalers
-# -----------------------------
-joblib.dump(svr, "models/svr_agb_model.pkl")
-joblib.dump(scaler_X, "models/svr_scaler_X.save")
-joblib.dump(scaler_y, "models/svr_scaler_y.save")
+with open("models/svr_scaler_X.save", "wb") as f:
+    pickle.dump(scaler_X, f)
 
-print("✅ Saved SVR model to models/")
+with open("models/svr_scaler_y.save", "wb") as f:
+    pickle.dump(scaler_y, f)
+
+print("✅ SVR model and scalers saved to 'models/'")
