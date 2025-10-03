@@ -1,21 +1,3 @@
-# indices.py
-def calculate_indices(blue, green, red, nir):
-    """คำนวณดัชนีพืชพรรณหลัก 5 ค่า"""
-    ndvi = (nir - red) / (nir + red) if (nir + red) != 0 else 0
-    tndvi = ((nir - red) / (nir + red) + 0.5) ** 0.5 if (nir + red) != 0 else 0
-    sr = nir / red if red != 0 else 0
-    savi = ((nir - red) / (nir + red + 0.5)) * 1.5 if (nir + red + 0.5) != 0 else 0
-    msavi2 = (2 * nir + 1 - ((2 * nir + 1) ** 2 - 8 * (nir - red)) ** 0.5) / 2 if (nir - red) >= 0 else 0
-
-    return {
-        "NDVI": ndvi,
-        "TNDVI": tndvi,
-        "SR": sr,
-        "SAVI": savi,
-        "MSAVI2": msavi2
-    }
---
-
 from flask import Flask, render_template, request, jsonify
 import ee
 import numpy as np
@@ -28,15 +10,15 @@ ee.Initialize(project='map-web-473508')
 app = Flask(__name__)
 
 # -----------------------------
-# โหลดโมเดล MLP และ SVR พร้อม scaler
+# โหลดโมเดล MLP + SVR และ scalers
 # -----------------------------
-mlp = joblib.load("models/mlp_model.pkl")
-scaler_X = joblib.load("models/scaler_X.save")
-scaler_y = joblib.load("models/scaler_y.save")
+mlp = joblib.load("mlp_model.pkl")
+scaler_X = joblib.load("scaler_X.save")
+scaler_y = joblib.load("scaler_y.save")
 
-svr = joblib.load("models/svr_agb_model.pkl")
-svr_scaler_X = joblib.load("models/svr_scaler_X.save")
-svr_scaler_y = joblib.load("models/svr_scaler_y.save")
+svr = joblib.load("svr_agb_model.pkl")
+svr_scaler_X = joblib.load("svr_scaler_X.save")
+svr_scaler_y = joblib.load("svr_scaler_y.save")
 
 # -----------------------------
 # Cloud Mask Function (Sentinel-2 SR → Reflectance 0–100)
@@ -47,7 +29,6 @@ def mask_s2_clouds_reflectance(image):
     cirrus_bit_mask = 1 << 11
     mask = qa.bitwiseAnd(cloud_bit_mask).eq(0) \
            .And(qa.bitwiseAnd(cirrus_bit_mask).eq(0))
-    # scale 0–10000 → 0–1 → คูณ 100 → 0–100
     reflectance = image.divide(10000).multiply(100)
     return reflectance.updateMask(mask)
 
@@ -57,7 +38,6 @@ def index():
     return render_template('index.html')
 
 # -----------------------------
-# Endpoint: ดึงค่า Pixel Reflectance 0–100
 @app.route('/get_pixel', methods=['POST'])
 def get_pixel():
     lat = float(request.json['lat'])
@@ -80,48 +60,44 @@ def get_pixel():
         scale=10
     ).getInfo()
 
-    # -----------------------------
-    # ดึงค่าการสะท้อนแสง Sentinel
-    B2 = bands.get('B2')  # Blue
-    B3 = bands.get('B3')  # Green
-    B4 = bands.get('B4')  # Red
-    B8 = bands.get('B8')  # NIR
-
-    X_input = np.array([[B2, B3, B4, B8]])
+    # --- MLP predict field reflectance ---
+    X_input = np.array([[bands['B2'], bands['B3'], bands['B4'], bands['B8']]])  # Blue, Green, Red, NIR
     X_scaled = scaler_X.transform(X_input)
     field_reflectance_scaled = mlp.predict(X_scaled)
     field_reflectance = scaler_y.inverse_transform(field_reflectance_scaled)
 
-    blue, green, red, nir = field_reflectance[0]
+    blue_field, green_field, red_field, nir_field = field_reflectance[0]
 
-    # -----------------------------
-    # คำนวณ indices จาก red & nir
-    indices = calculate_indices(blue, green, red, nir)
+    # --- Calculate indices (ใช้ Red & NIR แบบ field) ---
+    indices = calculate_indices(red_field, nir_field, blue_field, green_field)
 
-    # -----------------------------
-    # Predict AGB using SVR
+    # --- Predict AGB ---
     X_indices = np.array([[indices["NDVI"], indices["TNDVI"], indices["SR"], indices["SAVI"], indices["MSAVI2"]]])
     X_indices_scaled = svr_scaler_X.transform(X_indices)
     agb_scaled = svr.predict(X_indices_scaled)
     agb = svr_scaler_y.inverse_transform(agb_scaled.reshape(-1,1))[0][0]
 
-    # -----------------------------
     return jsonify({
         "field_reflectance": {
-            "Blue": float(blue),
-            "Green": float(green),
-            "Red": float(red),
-            "NIR": float(nir)
+            "Blue": float(blue_field),
+            "Green": float(green_field),
+            "Red": float(red_field),
+            "NIR": float(nir_field)
         },
         "indices": indices,
-        "AGB": float(agb)
+        "AGB": float(agb),
+        "satellite_bands": {
+            "B2": float(bands['B2']),
+            "B3": float(bands['B3']),
+            "B4": float(bands['B4']),
+            "B8": float(bands['B8'])
+        }
     })
 
-# -----------------------------
 if __name__ == '__main__':
     app.run(debug=True)
---
 
+--
 <!DOCTYPE html>
 <html>
 <head>
@@ -131,7 +107,10 @@ if __name__ == '__main__':
   <style>
     body { margin:0; padding:0; }
     #map { height:100vh; width:75%; float:left; }
-    #sidebar { width:25%; height:100vh; float:right; padding:15px; box-sizing:border-box; background:#f7f7f7; overflow-y:auto; font-family:sans-serif; }
+    #sidebar {
+      width:25%; height:100vh; float:right; padding:15px; box-sizing:border-box;
+      background:#f7f7f7; overflow-y:auto; font-family:sans-serif;
+    }
     h3 { margin-top:0; }
     label { display:block; margin-top:10px; font-weight:bold; }
     input, button { width:90%; margin-top:5px; padding:5px; font-size:14px; }
@@ -147,17 +126,34 @@ if __name__ == '__main__':
     <input type="date" id="start" value="2020-01-01">
     <label>End Date:</label>
     <input type="date" id="end" value="2020-01-15">
+    <button id="loadMap">Load Map</button>
+
+    <hr>
+
+    <h4>Pixel Info</h4>
+    <label>Latitude:</label>
+    <input type="number" id="lat" step="0.0001">
+    <label>Longitude:</label>
+    <input type="number" id="lon" step="0.0001">
     <button id="getPixel">Get Pixel</button>
 
     <div id="pixelData" style="margin-top:10px;">
       <p><strong>Selected Point:</strong></p>
       <p id="coord">Lat: -, Lon: -</p>
       <hr>
+      <p><strong>Satellite Pixel Reflectance</strong></p>
+      <p id="red">Red (B4): -</p>
+      <p id="green">Green (B3): -</p>
+      <p id="blue">Blue (B2): -</p>
+      <p id="nir">NIR (B8): -</p>
+
+      <hr>
       <p><strong>Field Reflectance (MLP)</strong></p>
-      <p id="blue">Blue: -</p>
-      <p id="green">Green: -</p>
-      <p id="red">Red: -</p>
-      <p id="nir">NIR: -</p>
+      <p id="field_red">Red: -</p>
+      <p id="field_green">Green: -</p>
+      <p id="field_blue">Blue: -</p>
+      <p id="field_nir">NIR: -</p>
+
       <hr>
       <p><strong>Vegetation Indices</strong></p>
       <p id="ndvi">NDVI: -</p>
@@ -165,68 +161,92 @@ if __name__ == '__main__':
       <p id="sr">SR: -</p>
       <p id="savi">SAVI: -</p>
       <p id="msavi2">MSAVI2: -</p>
+
       <hr>
-      <p><strong>Estimated AGB:</strong> <span id="agb">-</span></p>
+      <p><strong>Estimated AGB</strong></p>
+      <p id="agb">AGB: -</p>
     </div>
   </div>
 
-<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
-<script>
-var map = L.map('map').setView([19.2, 100.1], 10);
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-  attribution: '&copy; OpenStreetMap contributors'
-}).addTo(map);
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+  <script>
+    var osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; OpenStreetMap contributors'
+    });
 
-var marker;
+    var maptilerHybrid = L.tileLayer('https://api.maptiler.com/maps/hybrid/{z}/{x}/{y}.png?key=SorpWvu9Cx7zkYKrxJbN', {
+      attribution: '&copy; MapTiler',
+      tileSize: 512,
+      zoomOffset: -1
+    });
 
-function showMarker(lat, lon){
-  if(marker) map.removeLayer(marker);
-  marker = L.marker([lat, lon]).addTo(map);
-  marker.bindPopup(`Lat: ${lat.toFixed(6)}, Lon: ${lon.toFixed(6)}`).openPopup();
-}
+    var map = L.map('map', { center: [19.2, 100.1], zoom: 10, layers: [osm] });
+    var baseMaps = { "OpenStreetMap": osm, "MapTiler Hybrid": maptilerHybrid };
+    var overlayMaps = {};
+    var layerControl = L.control.layers(baseMaps, overlayMaps, {collapsed: false}).addTo(map);
 
-async function getPixelData(lat, lon){
-  let start = document.getElementById('start').value;
-  let end = document.getElementById('end').value;
-  let resp = await fetch('/get_pixel',{
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({lat, lon, start, end})
-  });
-  let data = await resp.json();
+    var s2layer = {}; // เก็บ Sentinel และ THEOS
+    var marker;
 
-  document.getElementById('coord').innerText = `Lat: ${lat}, Lon: ${lon}`;
-  document.getElementById('blue').innerText = `Blue: ${data.field_reflectance.Blue.toFixed(5)}`;
-  document.getElementById('green').innerText = `Green: ${data.field_reflectance.Green.toFixed(5)}`;
-  document.getElementById('red').innerText = `Red: ${data.field_reflectance.Red.toFixed(5)}`;
-  document.getElementById('nir').innerText = `NIR: ${data.field_reflectance.NIR.toFixed(5)}`;
+    function showMarker(lat, lon) {
+      if(marker) map.removeLayer(marker);
+      marker = L.marker([lat, lon]).addTo(map);
+      marker.bindPopup(`Lat: ${lat.toFixed(6)}, Lon: ${lon.toFixed(6)}`).openPopup();
+    }
 
-  document.getElementById('ndvi').innerText = `NDVI: ${data.indices.NDVI.toFixed(5)}`;
-  document.getElementById('tndvi').innerText = `TNDVI: ${data.indices.TNDVI.toFixed(5)}`;
-  document.getElementById('sr').innerText = `SR: ${data.indices.SR.toFixed(5)}`;
-  document.getElementById('savi').innerText = `SAVI: ${data.indices.SAVI.toFixed(5)}`;
-  document.getElementById('msavi2').innerText = `MSAVI2: ${data.indices.MSAVI2.toFixed(5)}`;
+    function formatVal(val) {
+      return (val !== null && val !== undefined) ? Number(val).toFixed(5) : '-';
+    }
 
-  document.getElementById('agb').innerText = data.AGB.toFixed(5);
-}
+    async function getPixelData(lat, lon, start, end) {
+      let resp = await fetch('/get_pixel', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({lat, lon, start, end})
+      });
+      let pixel = await resp.json();
 
-document.getElementById('getPixel').onclick = function(){
-  let lat = parseFloat(prompt("Enter Latitude:"));
-  let lon = parseFloat(prompt("Enter Longitude:"));
-  if(isNaN(lat) || isNaN(lon)){
-    alert("Invalid coordinates!");
-    return;
-  }
-  showMarker(lat, lon);
-  getPixelData(lat, lon);
-}
+      document.getElementById('coord').innerText = `Lat: ${lat}, Lon: ${lon}`;
+      document.getElementById('red').innerText   = `Red (B4): ${formatVal(pixel.satellite_bands.B4)}`;
+      document.getElementById('green').innerText = `Green (B3): ${formatVal(pixel.satellite_bands.B3)}`;
+      document.getElementById('blue').innerText  = `Blue (B2): ${formatVal(pixel.satellite_bands.B2)}`;
+      document.getElementById('nir').innerText   = `NIR (B8): ${formatVal(pixel.satellite_bands.B8)}`;
 
-map.on('click', function(e){
-  let lat = e.latlng.lat;
-  let lon = e.latlng.lng;
-  showMarker(lat, lon);
-  getPixelData(lat, lon);
-});
-</script>
+      document.getElementById('field_red').innerText   = `Red: ${formatVal(pixel.field_reflectance.Red)}`;
+      document.getElementById('field_green').innerText = `Green: ${formatVal(pixel.field_reflectance.Green)}`;
+      document.getElementById('field_blue').innerText  = `Blue: ${formatVal(pixel.field_reflectance.Blue)}`;
+      document.getElementById('field_nir').innerText   = `NIR: ${formatVal(pixel.field_reflectance.NIR)}`;
+
+      document.getElementById('ndvi').innerText   = `NDVI: ${formatVal(pixel.indices.NDVI)}`;
+      document.getElementById('tndvi').innerText  = `TNDVI: ${formatVal(pixel.indices.TNDVI)}`;
+      document.getElementById('sr').innerText     = `SR: ${formatVal(pixel.indices.SR)}`;
+      document.getElementById('savi').innerText   = `SAVI: ${formatVal(pixel.indices.SAVI)}`;
+      document.getElementById('msavi2').innerText = `MSAVI2: ${formatVal(pixel.indices.MSAVI2)}`;
+
+      document.getElementById('agb').innerText     = `AGB: ${formatVal(pixel.AGB)}`;
+    }
+
+    document.getElementById('getPixel').onclick = async function() {
+      let lat = parseFloat(document.getElementById('lat').value);
+      let lon = parseFloat(document.getElementById('lon').value);
+      let start = document.getElementById('start').value;
+      let end = document.getElementById('end').value;
+      if(isNaN(lat) || isNaN(lon)) { alert("Please enter valid coordinates!"); return; }
+      map.setView([lat, lon], 14);
+      showMarker(lat, lon);
+      await getPixelData(lat, lon, start, end);
+    };
+
+    map.on('click', async function(e){
+      let lat = e.latlng.lat;
+      let lon = e.latlng.lng;
+      document.getElementById('lat').value = lat.toFixed(6);
+      document.getElementById('lon').value = lon.toFixed(6);
+      showMarker(lat, lon);
+      let start = document.getElementById('start').value;
+      let end = document.getElementById('end').value;
+      await getPixelData(lat, lon, start, end);
+    });
+  </script>
 </body>
 </html>
