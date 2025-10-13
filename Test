@@ -1,10 +1,76 @@
-error: Could not find module 'hdf5.dll' (or one of its dependencies). Try using the full path with constructor syntax.
-      [end of output]
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense, Dropout
+from tensorflow.keras.callbacks import EarlyStopping
+import joblib
 
-  note: This error originates from a subprocess, and is likely not a problem with pip.
-  ERROR: Failed building wheel for h5py
-Failed to build h5py
-error: failed-wheel-build-for-install
+# --------------------------------------------------
+# 1. โหลดข้อมูล
+# --------------------------------------------------
+data = pd.read_excel("bands_sentinel_train.xlsx")
 
-× Failed to build installable wheels for some pyproject.toml based projects
-╰─> h5py
+# Features (Sentinel-2)
+X = data[["Band1", "Band2", "Band3", "Band4"]].values
+# Targets (Theos-1)
+y = data[["B1", "B2", "B3", "B4"]].values
+
+# --------------------------------------------------
+# 2. Scaling
+# --------------------------------------------------
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(X)
+
+# --------------------------------------------------
+# 3. แบ่งข้อมูล Train / Validation
+# --------------------------------------------------
+X_train, X_val, y_train, y_val = train_test_split(
+    X_scaled, y, test_size=0.2, random_state=42
+)
+
+# --------------------------------------------------
+# 4. สร้างโมเดล Deep Learning (ไม่ใช้ scikeras)
+# --------------------------------------------------
+model = Sequential([
+    Dense(128, activation='relu', input_shape=(4,)),
+    Dropout(0.2),
+    Dense(64, activation='relu'),
+    Dense(32, activation='relu'),
+    Dense(4, activation='linear')  # 4 outputs = B1-B4
+])
+
+model.compile(optimizer='adam', loss='mse', metrics=['mae'])
+
+# --------------------------------------------------
+# 5. Early Stopping
+# --------------------------------------------------
+early_stop = EarlyStopping(
+    monitor='val_loss',
+    patience=30,
+    restore_best_weights=True,
+    verbose=1
+)
+
+# --------------------------------------------------
+# 6. Train
+# --------------------------------------------------
+history = model.fit(
+    X_train, y_train,
+    validation_data=(X_val, y_val),
+    epochs=300,
+    batch_size=8,
+    callbacks=[early_stop],
+    verbose=1
+)
+
+# --------------------------------------------------
+# 7. Save model และ scaler
+# --------------------------------------------------
+# บันทึกโมเดล keras เป็น .pkl (ใช้ joblib เก็บ wrapper)
+joblib.dump(model, "deep_reflectance_model.pkl")
+# บันทึก scaler แยกเป็น .save
+joblib.dump(scaler, "reflectance_scaler.save")
+
+print("✅ Saved model as deep_reflectance_model.pkl and scaler as reflectance_scaler.save")
