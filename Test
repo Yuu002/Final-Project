@@ -1,85 +1,76 @@
 import pandas as pd
+import numpy as np
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import MinMaxScaler
-from sklearn.metrics import mean_squared_error, r2_score
+from sklearn.preprocessing import StandardScaler
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Dense, Dropout
-from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.callbacks import EarlyStopping
-from scikeras.wrappers import KerasRegressor
-import numpy as np
 import joblib
-import matplotlib.pyplot as plt
 
-# === โหลดข้อมูล ===
+# --------------------------------------------------
+# 1. โหลดข้อมูล
+# --------------------------------------------------
 data = pd.read_excel("bands_sentinel_train.xlsx")
+
+# Features (Sentinel-2)
 X = data[["Band1", "Band2", "Band3", "Band4"]].values
+# Targets (Theos-1)
 y = data[["Blue (B1)", "Green (B2)", "Red (B3)", "NIR (B4)"]].values
 
-# === แบ่งชุดข้อมูล ===
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+# --------------------------------------------------
+# 2. Scaling
+# --------------------------------------------------
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(X)
 
-# === Scaling ===
-scaler_X = MinMaxScaler()
-scaler_y = MinMaxScaler()
-
-X_train_scaled = scaler_X.fit_transform(X_train)
-X_test_scaled = scaler_X.transform(X_test)
-y_train_scaled = scaler_y.fit_transform(y_train)
-y_test_scaled = scaler_y.transform(y_test)
-
-# === ฟังก์ชันสร้างโมเดล Keras ===
-def build_model():
-    model = Sequential([
-        Dense(128, activation='relu', input_shape=(4,)),
-        Dropout(0.2),
-        Dense(64, activation='relu'),
-        Dropout(0.2),
-        Dense(32, activation='relu'),
-        Dense(4, activation='sigmoid')
-    ])
-    model.compile(optimizer=Adam(learning_rate=0.001), loss='mse')
-    return model
-
-# === ห่อด้วย scikeras เพื่อบันทึกเป็น pkl ได้ ===
-wrapper = KerasRegressor(
-    model=build_model,
-    epochs=300,
-    batch_size=16,
-    validation_split=0.2,
-    verbose=1,
-    callbacks=[EarlyStopping(monitor='val_loss', patience=20, restore_best_weights=True)]
+# --------------------------------------------------
+# 3. แบ่งข้อมูล Train / Validation
+# --------------------------------------------------
+X_train, X_val, y_train, y_val = train_test_split(
+    X_scaled, y, test_size=0.2, random_state=42
 )
 
-# === เทรนโมเดล ===
-history = wrapper.fit(X_train_scaled, y_train_scaled)
+# --------------------------------------------------
+# 4. สร้างโมเดล Deep Learning (ไม่ใช้ scikeras)
+# --------------------------------------------------
+model = Sequential([
+    Dense(128, activation='relu', input_shape=(4,)),
+    Dropout(0.2),
+    Dense(64, activation='relu'),
+    Dense(32, activation='relu'),
+    Dense(4, activation='linear')  # 4 outputs = B1-B4
+])
 
-# === ประเมิน ===
-y_pred_scaled = wrapper.predict(X_test_scaled)
-y_pred = scaler_y.inverse_transform(y_pred_scaled)
+model.compile(optimizer='adam', loss='mse', metrics=['mae'])
 
-rmse = np.sqrt(mean_squared_error(y_test, y_pred))
-r2 = r2_score(y_test, y_pred)
-print(f"\n✅ RMSE: {rmse:.3f}")
-print(f"✅ R²: {r2:.3f}")
+# --------------------------------------------------
+# 5. Early Stopping
+# --------------------------------------------------
+early_stop = EarlyStopping(
+    monitor='val_loss',
+    patience=30,
+    restore_best_weights=True,
+    verbose=1
+)
 
-# === แสดงกราฟ Loss ===
-plt.figure(figsize=(8,5))
-plt.plot(history.history_['loss'], label='Training Loss')
-plt.plot(history.history_['val_loss'], label='Validation Loss')
-plt.title('Loss vs Validation Loss')
-plt.xlabel('Epoch')
-plt.ylabel('MSE')
-plt.legend()
-plt.grid(True)
-plt.show()
+# --------------------------------------------------
+# 6. Train
+# --------------------------------------------------
+history = model.fit(
+    X_train, y_train,
+    validation_data=(X_val, y_val),
+    epochs=300,
+    batch_size=8,
+    callbacks=[early_stop],
+    verbose=1
+)
 
-# === บันทึกโมเดลเป็น .pkl ===
-joblib.dump(wrapper, "deep_reflectance_model.pkl")
+# --------------------------------------------------
+# 7. Save model และ scaler
+# --------------------------------------------------
+# บันทึกโมเดล keras เป็น .pkl (ใช้ joblib เก็บ wrapper)
+joblib.dump(model, "deep_reflectance_model.pkl")
+# บันทึก scaler แยกเป็น .save
+joblib.dump(scaler, "reflectance_scaler.save")
 
-# === บันทึก scaler เป็น .save ===
-joblib.dump(scaler_X, "scaler_X.save")
-joblib.dump(scaler_y, "scaler_y.save")
-
-print("💾 โมเดลถูกบันทึกเป็น deep_reflectance_model.pkl")
-print("💾 ตัวสเกลถูกบันทึกเป็น scaler_X.save และ scaler_y.save")
+print("✅ Saved model as deep_reflectance_model.pkl and scaler as reflectance_scaler.save")
