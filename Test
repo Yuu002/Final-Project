@@ -19,6 +19,10 @@ mlp_model = joblib.load("models\\mlp_model.pkl")
 scaler_X = joblib.load("models\\scaler_X.save")
 scaler_y = joblib.load("models\\scaler_y.save")
 
+ref_model = joblib.load("models\\ref_model.pkl")
+ref_scaler_X = joblib.load("models\\ref_scaler_X.save")
+ref_scaler_y = joblib.load("models\\ref_scaler_y.save")
+
 svr_model = joblib.load("models\\svr_agb_model.pkl")
 svr_scaler_X = joblib.load("models\\svr_scaler_X.save")
 svr_scaler_y = joblib.load("models\\svr_scaler_y.save")
@@ -139,12 +143,19 @@ def get_pixel():
     y_pred_scaled = mlp_model.predict(X_scaled)
     field_reflectance = scaler_y.inverse_transform(y_pred_scaled)
 
-    field_blue, field_green, field_red, field_nir = field_reflectance.ravel()
+    # -----------------------------
+    # Step 2.5: REF → Cor Field Reflectance
+    # -----------------------------
+    ref_X_scaled = ref_scaler_X.transform(field_reflectance)
+    ref_y_pred_scaled = ref_model.predict(ref_X_scaled)
+    ref_field_reflectance = ref_scaler_y.inverse_transform(ref_y_pred_scaled)
+
+    ref_blue, ref_green, ref_red, ref_nir = ref_field_reflectance.ravel()
 
     # -----------------------------
     # Step 3: คำนวณดัชนี 5 ตัว
     # -----------------------------
-    indices = calculate_indices(field_blue, field_green, field_red, field_nir)
+    indices = calculate_indices(ref_blue, ref_green, ref_red, ref_nir)
 
     # -----------------------------
     # Step 4: SVR → Predict AGB
@@ -159,10 +170,10 @@ def get_pixel():
     # -----------------------------
     pixel_data.update({
         "field_reflectance": {
-            "Blue": field_blue,
-            "Green": field_green,
-            "Red": field_red,
-            "NIR": field_nir
+            "Blue": ref_blue,
+            "Green": ref_green,
+            "Red": ref_red,
+            "NIR": ref_nir
         },
         "indices": indices,
         "AGB": agb
