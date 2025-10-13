@@ -1,185 +1,67 @@
-<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8">
-<title>Sentinel-2 Viewer</title>
-<link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-<style>
-/* --- Styles เหมือนเดิมทุกประการ --- */
-body { font-family: 'Inter', sans-serif; background: #0f172a; color: #e2e8f0; overflow: hidden; }
-#map { height: 100vh; width: calc(100% - 420px); float: left; position: relative; }
-#sidebar { width: 420px; height: 100vh; float: right; background: linear-gradient(135deg,#1e293b 0%,#0f172a 100%); overflow-y: auto; box-shadow:-4px 0 24px rgba(0,0,0,0.3); backdrop-filter: blur(10px);}
-.section { padding: 24px 28px; border-bottom: 1px solid rgba(255,255,255,0.06);}
-label{display:block;margin-bottom:8px;font-size:13px;color:#94a3b8;}
-input[type="date"], input[type="number"]{width:100%;padding:12px 16px;margin-bottom:16px;background:rgba(255,255,255,0.05);border-radius:10px;color:#e2e8f0;border:1px solid rgba(255,255,255,0.1);}
-button{width:100%;padding:14px 24px;background:linear-gradient(135deg,#3b82f6 0%,#2563eb 100%);border:none;border-radius:10px;color:white;font-size:15px;font-weight:600;cursor:pointer;margin-bottom:16px;}
-.coord-display{background:rgba(59,130,246,0.1);border:1px solid rgba(59,130,246,0.2);border-radius:10px;padding:14px 16px;margin-bottom:20px;display:flex;justify-content:space-between;}
-.coord-item{flex:1;}
-.coord-label{font-size:11px;color:#94a3b8;margin-bottom:4px;text-transform:uppercase;}
-.coord-val{font-size:15px;color:#60a5fa;font-weight:600;}
-</style>
-</head>
-<body>
-<div id="map"></div>
-<div id="sidebar">
+# -----------------------------
+# Cloud Mask Function (Sentinel-2 SR → Surface Reflectance 0–1)
+# -----------------------------
+def mask_s2_clouds_reflectance(image):
+    """Masks clouds in Sentinel-2 SR and scales to reflectance (0–1)."""
+    qa = image.select('QA60')
+    cloud_bit_mask = 1 << 10
+    cirrus_bit_mask = 1 << 11
+    mask = (
+        qa.bitwiseAnd(cloud_bit_mask)
+        .eq(0)
+        .And(qa.bitwiseAnd(cirrus_bit_mask).eq(0))
+    )
+    return image.updateMask(mask).divide(10000)  # scale 0–1
 
-  <div class="section">
-    <h2>🛰️ Sentinel-2 Viewer</h2>
-  </div>
+# -----------------------------
+# Cloud Mask + DN scale (Sentinel-2 → THEOS-style DN 0–100)
+# -----------------------------
+def mask_s2_clouds_dn(image):
+    qa = image.select('QA60')
+    cloud_bit_mask = 1 << 10
+    cirrus_bit_mask = 1 << 11
+    mask = qa.bitwiseAnd(cloud_bit_mask).eq(0).And(qa.bitwiseAnd(cirrus_bit_mask).eq(0))
+    dn_image = image.divide(10000).multiply(100).toUint16()
+    return dn_image.updateMask(mask)
 
-  <div class="section">
-    <h3>Date Range</h3>
-    <label>Start Date</label>
-    <input type="date" id="start" value="2020-01-01">
-    <label>End Date</label>
-    <input type="date" id="end" value="2020-01-15">
-    <button id="loadMap">🔍 Load Satellite Imagery</button>
-  </div>
+# -----------------------------
+@app.route('/')
+def index():
+    return render_template('index.html')
 
-  <div class="section">
-    <h3>Mode Selection</h3>
-    <label><input type="radio" name="mode" value="point" checked> Point Mode (1 พิกัด)</label>
-    <label><input type="radio" name="mode" value="area"> Area Mode (ครอบพื้นที่)</label>
-  </div>
+# -----------------------------
+# Endpoint: ดึง Sentinel-2 และ THEOS-style map tiles
+# -----------------------------
+@app.route('/get_map', methods=['POST'])
+def get_map():
+    start = request.json['start']
+    end = request.json['end']
 
-  <div class="section" id="pointSection">
-    <h3>Point Selection</h3>
-    <label>Latitude</label>
-    <input type="number" id="lat" step="0.0001" placeholder="19.2000">
-    <label>Longitude</label>
-    <input type="number" id="lon" step="0.0001" placeholder="100.1000">
-    <button id="getPixel">📍 Analyze Point</button>
-  </div>
+    # Sentinel-2 Surface Reflectance (0–1)
+    collection_ref = (
+        ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
+        .filterDate(start, end)
+        .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
+        .map(mask_s2_clouds_reflectance)
+    )
+    image_ref = collection_ref.mean()
 
-  <div class="section" id="areaSection" style="display:none;">
-    <h3>Area Selection</h3>
-    <p>วาดสี่เหลี่ยมบนแผนที่เพื่อครอบพื้นที่และเฉลี่ยค่าแสง</p>
-    <button id="getArea">📐 Analyze Area</button>
-  </div>
+    vis_sentinel = {'bands': ['B4', 'B3', 'B2'], 'min': 0.0, 'max': 0.3, 'gamma': 1.0}
+    map_id_sentinel = ee.Image(image_ref).getMapId(vis_sentinel)
 
-  <div class="section">
-    <h3>Selected Location / Area</h3>
-    <div class="coord-display">
-      <div class="coord-item">
-        <div class="coord-label">Latitude</div>
-        <div class="coord-val" id="coordLat">-</div>
-      </div>
-      <div class="coord-item">
-        <div class="coord-label">Longitude</div>
-        <div class="coord-val" id="coordLon">-</div>
-      </div>
-    </div>
-  </div>
+    # THEOS-style DN
+    collection_dn = (
+        ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
+        .filterDate(start, end)
+        .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
+        .map(mask_s2_clouds_dn)
+    )
+    image_dn = collection_dn.mean()
 
-  <!-- ส่วนข้อมูลค่าแสง, indices, AGB เหมือนเดิม -->
+    vis_theos = {'bands': ['B4', 'B3', 'B2'], 'min': 0, 'max': 100, 'gamma': 1.0}
+    map_id_theos = ee.Image(image_dn).getMapId(vis_theos)
 
-</div>
-
-<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
-<script src="https://unpkg.com/leaflet-draw/dist/leaflet.draw.js"></script>
-<link rel="stylesheet" href="https://unpkg.com/leaflet-draw/dist/leaflet.draw.css"/>
-
-<script>
-var map = L.map('map',{center:[19.2,100.1],zoom:10});
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
-
-var s2layer = {}, marker, drawnItems = new L.FeatureGroup();
-map.addLayer(drawnItems);
-
-// --- Draw control สำหรับ Area Mode ---
-var drawControl = new L.Control.Draw({
-    draw: { polygon:false, circle:false, circlemarker:false, marker:false, polyline:false, rectangle:true },
-    edit: { featureGroup: drawnItems }
-});
-map.addControl(drawControl);
-
-// --- Toggle Mode ---
-document.querySelectorAll('input[name="mode"]').forEach(el=>{
-    el.addEventListener('change', e=>{
-        if(e.target.value=='point'){ 
-            document.getElementById('pointSection').style.display='block';
-            document.getElementById('areaSection').style.display='none';
-        } else {
-            document.getElementById('pointSection').style.display='none';
-            document.getElementById('areaSection').style.display='block';
-        }
-    });
-});
-
-// --- Load Map ---
-document.getElementById('loadMap').onclick = async function(){
-    let start = document.getElementById('start').value;
-    let end   = document.getElementById('end').value;
-    let resp = await fetch('/get_map',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({start,end})});
-    let data = await resp.json();
-    if(s2layer.sentinel){ map.removeLayer(s2layer.sentinel); map.removeLayer(s2layer.theos);}
-    s2layer.sentinel = L.tileLayer(data.sentinel_url).addTo(map);
-    s2layer.theos = L.tileLayer(data.theos_url);
-};
-
-// --- Point Mode Click / Button ---
-function showMarker(lat,lon){
-    if(marker) map.removeLayer(marker);
-    marker = L.marker([lat,lon]).addTo(map);
-}
-document.getElementById('getPixel').onclick = async function(){
-    let lat=parseFloat(document.getElementById('lat').value);
-    let lon=parseFloat(document.getElementById('lon').value);
-    let start=document.getElementById('start').value;
-    let end=document.getElementById('end').value;
-    showMarker(lat,lon);
-    await fetchPixel(lat,lon,start,end);
-}
-map.on('click', async function(e){
-    if(document.querySelector('input[name="mode"]:checked').value!='point') return;
-    let lat=e.latlng.lat;
-    let lon=e.latlng.lng;
-    document.getElementById('lat').value=lat.toFixed(6);
-    document.getElementById('lon').value=lon.toFixed(6);
-    showMarker(lat,lon);
-    await fetchPixel(lat,lon,document.getElementById('start').value,document.getElementById('end').value);
-});
-
-// --- Area Mode Draw ---
-map.on(L.Draw.Event.CREATED,function(e){
-    drawnItems.clearLayers();
-    drawnItems.addLayer(e.layer);
-});
-
-// --- Analyze Area ---
-document.getElementById('getArea').onclick=async function(){
-    if(drawnItems.getLayers().length==0){ alert('Please draw a rectangle first!'); return; }
-    let bounds = drawnItems.getLayers()[0].getBounds();
-    let start = document.getElementById('start').value;
-    let end = document.getElementById('end').value;
-
-    // ส่ง bounds (lat/lon SW, NE) ไป server เพื่อเฉลี่ยค่า
-    let resp = await fetch('/get_area',{
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({
-            sw_lat: bounds.getSouthWest().lat,
-            sw_lon: bounds.getSouthWest().lng,
-            ne_lat: bounds.getNorthEast().lat,
-            ne_lon: bounds.getNorthEast().lng,
-            start, end
-        })
-    });
-    let data = await resp.json();
-    // อัปเดตค่าใน sidebar เหมือน getPixel
-    console.log(data); // ตัวอย่าง
-};
-
-// --- Fetch Pixel ---
-async function fetchPixel(lat,lon,start,end){
-    let resp = await fetch('/get_pixel',{
-        method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({lat,lon,start,end})
-    });
-    let pixel = await resp.json();
-    console.log(pixel);
-}
-</script>
-</body>
-</html>
+    return jsonify({
+        'sentinel_url': map_id_sentinel['tile_fetcher'].url_format,
+        'theos_url': map_id_theos['tile_fetcher'].url_format
+    })
