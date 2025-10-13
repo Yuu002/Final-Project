@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from tensorflow.keras.models import Sequential
@@ -18,27 +19,30 @@ X = data[["Band1", "Band2", "Band3", "Band4"]].values
 y = data[["Blue (B1)", "Green (B2)", "Red (B3)", "NIR (B4)"]].values
 
 # --------------------------------------------------
-# 2. Scaling
+# 2. Scaling แยก X / y
 # --------------------------------------------------
-scaler = StandardScaler()
-X_scaled = scaler.fit_transform(X)
+scaler_X = StandardScaler()
+scaler_y = StandardScaler()
+
+X_scaled = scaler_X.fit_transform(X)
+y_scaled = scaler_y.fit_transform(y)
 
 # --------------------------------------------------
 # 3. แบ่งข้อมูล Train / Validation
 # --------------------------------------------------
 X_train, X_val, y_train, y_val = train_test_split(
-    X_scaled, y, test_size=0.2, random_state=42
+    X_scaled, y_scaled, test_size=0.2, random_state=42
 )
 
 # --------------------------------------------------
-# 4. สร้างโมเดล Deep Learning (ไม่ใช้ scikeras)
+# 4. สร้างโมเดล Deep Learning
 # --------------------------------------------------
 model = Sequential([
     Dense(128, activation='relu', input_shape=(4,)),
     Dropout(0.2),
     Dense(64, activation='relu'),
     Dense(32, activation='relu'),
-    Dense(4, activation='linear')  # 4 outputs = B1-B4
+    Dense(4, activation='linear')  # output 4 ตัว: B1–B4
 ])
 
 model.compile(optimizer='adam', loss='mse', metrics=['mae'])
@@ -68,9 +72,34 @@ history = model.fit(
 # --------------------------------------------------
 # 7. Save model และ scaler
 # --------------------------------------------------
-# บันทึกโมเดล keras เป็น .pkl (ใช้ joblib เก็บ wrapper)
 joblib.dump(model, "deep_reflectance_model.pkl")
-# บันทึก scaler แยกเป็น .save
-joblib.dump(scaler, "reflectance_scaler.save")
+joblib.dump(scaler_X, "scaler_X.save")
+joblib.dump(scaler_y, "scaler_y.save")
 
-print("✅ Saved model as deep_reflectance_model.pkl and scaler as reflectance_scaler.save")
+print("✅ Saved model as deep_reflectance_model.pkl, scaler_X.save, and scaler_y.save")
+
+# --------------------------------------------------
+# 8. แสดงกราฟผลการเทรน
+# --------------------------------------------------
+
+# กราฟ Loss
+plt.figure()
+plt.plot(history.history['loss'], label='Train Loss')
+plt.plot(history.history['val_loss'], label='Validation Loss')
+plt.title('Model Loss (MSE)')
+plt.xlabel('Epoch')
+plt.ylabel('Loss')
+plt.legend()
+plt.grid(True)
+plt.show()
+
+# กราฟ MAE
+plt.figure()
+plt.plot(history.history['mae'], label='Train MAE')
+plt.plot(history.history['val_mae'], label='Validation MAE')
+plt.title('Model Mean Absolute Error (MAE)')
+plt.xlabel('Epoch')
+plt.ylabel('MAE')
+plt.legend()
+plt.grid(True)
+plt.show()
