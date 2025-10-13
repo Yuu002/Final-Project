@@ -1,94 +1,105 @@
-# -----------------------------
-# Endpoint: ดึงค่า Pixel Reflectance + predict models (เหมือนเดิม)
-# -----------------------------
-@app.route('/get_pixel', methods=['POST'])
-def get_pixel():
-    # ... โค้ดเดิม ...
-    pass  # ไม่เปลี่ยน
+<div class="section">
+  <div class="section-title">Area Selection</div>
+  <p style="font-size:13px;color:#94a3b8;">📌 Drag a rectangle on map to select area</p>
+  <button id="enableArea">🖌️ Enable Area Selection</button>
+  <button id="clearArea">🧹 Clear Area</button>
+</div>
 
-# -----------------------------
-# Endpoint: ดึงค่า Area Reflectance + predict models
-# -----------------------------
-@app.route('/get_area', methods=['POST'])
-def get_area():
-    # รับค่าพื้นที่เป็น bounding box
-    bbox = request.json['bbox']  # [minLon, minLat, maxLon, maxLat]
-    start = request.json['start']
-    end = request.json['end']
+// -------------------- Area Selection --------------------
+var drawnItems = new L.FeatureGroup();
+map.addLayer(drawnItems);
 
-    geom = ee.Geometry.Rectangle(bbox)
+var drawControl = new L.Control.Draw({
+  draw: {
+    polygon: false,
+    polyline: false,
+    circle: false,
+    marker: false,
+    circlemarker: false,
+    rectangle: {
+      shapeOptions: {
+        color: '#60a5fa',
+        weight: 2
+      }
+    }
+  },
+  edit: {
+    featureGroup: drawnItems
+  }
+});
+var areaEnabled = false;
 
-    collection = (
-        ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
-        .filterDate(start, end)
-        .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
-        .map(mask_s2_clouds_reflectance)
-    )
+document.getElementById('enableArea').onclick = function() {
+  if(!areaEnabled){
+    map.addControl(drawControl);
+    areaEnabled = true;
+    alert("Draw a rectangle on map to select area. After drawing, data will be calculated.");
+    // Hide single point coordinate fields
+    document.querySelector('div.section-title:contains("Location Selection")').parentElement.style.display = 'none';
+    document.querySelector('div.section-title:contains("Selected Location")').parentElement.style.display = 'none';
+  }
+};
 
-    image = collection.mean()
+document.getElementById('clearArea').onclick = function() {
+  drawnItems.clearLayers();
+};
 
-    bands = image.reduceRegion(
-        reducer=ee.Reducer.mean(),
-        geometry=geom,
-        scale=10,
-        maxPixels=1e9
-    )
+// Listen for area drawn
+map.on(L.Draw.Event.CREATED, async function (event) {
+  var layer = event.layer;
+  drawnItems.addLayer(layer);
 
-    pixel_data = bands.getInfo()
+  let bounds = layer.getBounds();
+  let start = document.getElementById('start').value;
+  let end = document.getElementById('end').value;
 
-    # -----------------------------
-    # Step 1: ดึงค่า Blue, Green, Red, NIR
-    # -----------------------------
-    try:
-        blue = float(pixel_data.get("B2", 0))
-        green = float(pixel_data.get("B3", 0))
-        red = float(pixel_data.get("B4", 0))
-        nir = float(pixel_data.get("B8", 0))
-    except:
-        return jsonify({"error": "invalid pixel values"})
+  // Prepare data for area average
+  let sw = bounds.getSouthWest();
+  let ne = bounds.getNorthEast();
 
-    # -----------------------------
-    # Step 2: MLP → Field Reflectance
-    # -----------------------------
-    X = np.array([[blue, green, red, nir]])
-    X_scaled = scaler_X.transform(X)
-    y_pred_scaled = mlp_model.predict(X_scaled)
-    field_reflectance = scaler_y.inverse_transform(y_pred_scaled)
-
-    # -----------------------------
-    # Step 2.5: REF → Cor Field Reflectance
-    # -----------------------------
-    ref_X_scaled = ref_scaler_X.transform(field_reflectance)
-    ref_y_pred_scaled = ref_model.predict(ref_X_scaled)
-    ref_field_reflectance = ref_scaler_y.inverse_transform(ref_y_pred_scaled)
-
-    ref_blue, ref_green, ref_red, ref_nir = ref_field_reflectance.ravel()
-
-    # -----------------------------
-    # Step 3: คำนวณดัชนี 5 ตัว
-    # -----------------------------
-    indices = calculate_indices(ref_blue, ref_green, ref_red, ref_nir)
-
-    # -----------------------------
-    # Step 4: SVR → Predict AGB
-    # -----------------------------
-    idx_vals = np.array([[indices["NDVI"], indices["TNDVI"], indices["SR"], indices["SAVI"], indices["MSAVI2"]]])
-    idx_scaled = svr_scaler_X.transform(idx_vals)
-    agb_scaled = svr_model.predict(idx_scaled)
-    agb = svr_scaler_y.inverse_transform(agb_scaled.reshape(-1, 1)).ravel()[0]
-
-    # -----------------------------
-    # รวมผลลัพธ์
-    # -----------------------------
-    pixel_data.update({
-        "field_reflectance": {
-            "Blue": ref_blue,
-            "Green": ref_green,
-            "Red": ref_red,
-            "NIR": ref_nir
-        },
-        "indices": indices,
-        "AGB": agb
+  let resp = await fetch('/get_pixel', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({
+      area: {
+        sw_lat: sw.lat, sw_lon: sw.lng,
+        ne_lat: ne.lat, ne_lon: ne.lng
+      },
+      start: start,
+      end: end
     })
+  });
+  let pixel = await resp.json();
 
-    return jsonify(pixel_data)
+  function formatVal(val) {
+    if (val == null || val == undefined) return '-';
+    let num = Number(val);
+    return num.toFixed(3);
+  }
+
+  // Hide coord display in area mode
+  document.getElementById('coordLat').innerText = '-';
+  document.getElementById('coordLon').innerText = '-';
+
+  document.getElementById('red').innerText   = formatVal(pixel['B4']);
+  document.getElementById('green').innerText = formatVal(pixel['B3']);
+  document.getElementById('blue').innerText  = formatVal(pixel['B2']);
+  document.getElementById('nir').innerText   = formatVal(pixel['B8']);
+
+  if(pixel.field_reflectance){
+    document.getElementById('fblue').innerText  = formatVal(pixel.field_reflectance.Blue);
+    document.getElementById('fgreen').innerText = formatVal(pixel.field_reflectance.Green);
+    document.getElementById('fred').innerText   = formatVal(pixel.field_reflectance.Red);
+    document.getElementById('fnir').innerText   = formatVal(pixel.field_reflectance.NIR);
+  }
+
+  if(pixel.indices){
+    document.getElementById('ndvi').innerText  = formatVal(pixel.indices.NDVI);
+    document.getElementById('tndvi').innerText = formatVal(pixel.indices.TNDVI);
+    document.getElementById('sr').innerText    = formatVal(pixel.indices.SR);
+    document.getElementById('savi').innerText  = formatVal(pixel.indices.SAVI);
+    document.getElementById('msavi2').innerText= formatVal(pixel.indices.MSAVI2);
+  }
+
+  document.getElementById('agb').innerText = formatVal(pixel.AGB);
+});
