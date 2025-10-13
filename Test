@@ -1,2 +1,201 @@
-<link rel="stylesheet" href="https://unpkg.com/leaflet-draw/dist/leaflet.draw.css"/>
-<script src="https://unpkg.com/leaflet-draw/dist/leaflet.draw.js"></script>
+from flask import Flask, render_template, request, jsonify
+import ee
+import numpy as np
+import os
+import joblib
+
+# -----------------------------
+# Initialize Earth Engine
+# -----------------------------
+ee.Initialize(project='map-web-473508')
+
+app = Flask(__name__)
+
+# -----------------------------
+# โหลดโมเดลทั้งหมด
+# -----------------------------
+mlp_model = joblib.load("models/mlp_model.pkl")
+ref_model = joblib.load("models/ref_model.pkl")
+svr_model = joblib.load("models/svr_model.pkl")
+
+# โหลด Scalers
+scaler_X = joblib.load("scalers/mlp_X_scaler.pkl")
+scaler_y = joblib.load("scalers/mlp_y_scaler.pkl")
+ref_scaler_X = joblib.load("scalers/ref_X_scaler.pkl")
+ref_scaler_y = joblib.load("scalers/ref_y_scaler.pkl")
+svr_scaler_X = joblib.load("scalers/svr_X_scaler.pkl")
+svr_scaler_y = joblib.load("scalers/svr_y_scaler.pkl")
+
+# -----------------------------
+# ฟังก์ชันคำนวณดัชนีพืชพรรณ
+# -----------------------------
+def calculate_indices(blue, green, red, nir):
+    ndvi = (nir - red) / (nir + red) if (nir + red) != 0 else 0
+    tndvi = np.sqrt(ndvi + 0.5)
+    sr = nir / red if red != 0 else 0
+    L = 0.5
+    savi = ((nir - red) * (1 + L)) / (nir + red + L) if (nir + red + L) != 0 else 0
+    msavi2 = (2 * nir + 1 - np.sqrt((2 * nir + 1)**2 - 8 * (nir - red))) / 2
+    return {"NDVI": ndvi, "TNDVI": tndvi, "SR": sr, "SAVI": savi, "MSAVI2": msavi2}
+
+# -----------------------------
+# ฟังก์ชัน Cloud Mask สำหรับ Sentinel-2
+# -----------------------------
+def mask_s2_clouds_reflectance(image):
+    qa = image.select('QA60')
+    cloudBitMask = 1 << 10
+    cirrusBitMask = 1 << 11
+    mask = qa.bitwiseAnd(cloudBitMask).eq(0).And(qa.bitwiseAnd(cirrusBitMask).eq(0))
+    return image.updateMask(mask).divide(10000)
+
+# -----------------------------
+# หน้าเว็บหลัก
+# -----------------------------
+@app.route('/')
+def index():
+    return render_template('index.html')
+
+# -----------------------------
+# Endpoint 1: วิเคราะห์จาก "พิกัดเดียว"
+# -----------------------------
+@app.route('/get_pixel', methods=['POST'])
+def get_pixel():
+    lat = float(request.json['lat'])
+    lon = float(request.json['lon'])
+    start = request.json['start']
+    end = request.json['end']
+
+    point = ee.Geometry.Point([lon, lat])
+
+    collection = (
+        ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
+        .filterDate(start, end)
+        .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
+        .map(mask_s2_clouds_reflectance)
+    )
+
+    image = collection.mean()
+
+    bands = image.reduceRegion(
+        reducer=ee.Reducer.mean(),
+        geometry=point,
+        scale=10,
+        maxPixels=1e9
+    )
+
+    data = bands.getInfo()
+
+    # ดึงค่าการสะท้อนแสงแต่ละ band
+    blue = float(data.get("B2", 0))
+    green = float(data.get("B3", 0))
+    red = float(data.get("B4", 0))
+    nir = float(data.get("B8", 0))
+
+    # Step 2: MLP → Field Reflectance
+    X = np.array([[blue, green, red, nir]])
+    X_scaled = scaler_X.transform(X)
+    y_pred_scaled = mlp_model.predict(X_scaled)
+    field_reflectance = scaler_y.inverse_transform(y_pred_scaled)
+
+    # Step 2.5: REF Model
+    ref_X_scaled = ref_scaler_X.transform(field_reflectance)
+    ref_y_pred_scaled = ref_model.predict(ref_X_scaled)
+    ref_field_reflectance = ref_scaler_y.inverse_transform(ref_y_pred_scaled)
+    ref_blue, ref_green, ref_red, ref_nir = ref_field_reflectance.ravel()
+
+    # Step 3: Indices
+    indices = calculate_indices(ref_blue, ref_green, ref_red, ref_nir)
+
+    # Step 4: AGB Prediction
+    idx_vals = np.array([[indices["NDVI"], indices["TNDVI"], indices["SR"], indices["SAVI"], indices["MSAVI2"]]])
+    idx_scaled = svr_scaler_X.transform(idx_vals)
+    agb_scaled = svr_model.predict(idx_scaled)
+    agb = svr_scaler_y.inverse_transform(agb_scaled.reshape(-1, 1)).ravel()[0]
+
+    return jsonify({
+        "B2": blue,
+        "B3": green,
+        "B4": red,
+        "B8": nir,
+        "field_reflectance": {
+            "Blue": ref_blue,
+            "Green": ref_green,
+            "Red": ref_red,
+            "NIR": ref_nir
+        },
+        "indices": indices,
+        "AGB": agb
+    })
+
+# -----------------------------
+# Endpoint 2: วิเคราะห์จาก "พื้นที่ครอบใหญ่"
+# -----------------------------
+@app.route('/get_area', methods=['POST'])
+def get_area():
+    coords = request.json['coords']  # [[lon, lat], ...]
+    start = request.json['start']
+    end = request.json['end']
+
+    polygon = ee.Geometry.Polygon([coords])
+
+    collection = (
+        ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
+        .filterDate(start, end)
+        .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
+        .map(mask_s2_clouds_reflectance)
+    )
+
+    image = collection.mean()
+
+    bands = image.reduceRegion(
+        reducer=ee.Reducer.mean(),
+        geometry=polygon,
+        scale=10,
+        maxPixels=1e9
+    )
+
+    data = bands.getInfo()
+
+    blue = float(data.get("B2", 0))
+    green = float(data.get("B3", 0))
+    red = float(data.get("B4", 0))
+    nir = float(data.get("B8", 0))
+
+    # Step 2: MLP → Field Reflectance
+    X = np.array([[blue, green, red, nir]])
+    X_scaled = scaler_X.transform(X)
+    y_pred_scaled = mlp_model.predict(X_scaled)
+    field_reflectance = scaler_y.inverse_transform(y_pred_scaled)
+
+    # Step 2.5 REF Model
+    ref_X_scaled = ref_scaler_X.transform(field_reflectance)
+    ref_y_pred_scaled = ref_model.predict(ref_X_scaled)
+    ref_field_reflectance = ref_scaler_y.inverse_transform(ref_y_pred_scaled)
+    ref_blue, ref_green, ref_red, ref_nir = ref_field_reflectance.ravel()
+
+    # Step 3: Indices
+    indices = calculate_indices(ref_blue, ref_green, ref_red, ref_nir)
+
+    # Step 4: AGB Prediction
+    idx_vals = np.array([[indices["NDVI"], indices["TNDVI"], indices["SR"], indices["SAVI"], indices["MSAVI2"]]])
+    idx_scaled = svr_scaler_X.transform(idx_vals)
+    agb_scaled = svr_model.predict(idx_scaled)
+    agb = svr_scaler_y.inverse_transform(agb_scaled.reshape(-1, 1)).ravel()[0]
+
+    return jsonify({
+        "B2": blue,
+        "B3": green,
+        "B4": red,
+        "B8": nir,
+        "field_reflectance": {
+            "Blue": ref_blue,
+            "Green": ref_green,
+            "Red": ref_red,
+            "NIR": ref_nir
+        },
+        "indices": indices,
+        "AGB": agb
+    })
+
+if __name__ == '__main__':
+    app.run(debug=True)
