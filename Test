@@ -1,9 +1,14 @@
-# app.py
+# --------------------------------------------------
+# app.py — Flask + Earth Engine + ML Model (no scikeras / no .h5)
+# --------------------------------------------------
+
 from flask import Flask, render_template, request, jsonify
 import ee
 import joblib
+import pickle
 import numpy as np
-from indices import calculate_indices  # ใช้สูตรที่คุณเขียนไว้ใน indices.py
+from tensorflow.keras.models import model_from_json
+from indices import calculate_indices  # ใช้สูตรคำนวณดัชนีในไฟล์ indices.py
 
 # -----------------------------
 # Init Earth Engine
@@ -12,19 +17,41 @@ ee.Initialize(project='map-web-473508')
 
 app = Flask(__name__)
 
+# ==================================================
+# Helper: โหลด Keras Model จาก .pkl ที่เก็บเป็น dict
+# ==================================================
+def load_keras_model_from_pkl(path):
+    """
+    โหลดไฟล์ .pkl ที่เก็บเป็น dict {"architecture": json, "weights": weights}
+    ถ้าเป็น object ที่มี .predict() อยู่แล้วก็คืนค่านั้นเลย
+    """
+    obj = joblib.load(path)
+    if isinstance(obj, dict) and "architecture" in obj and "weights" in obj:
+        model = model_from_json(obj["architecture"])
+        model.set_weights(obj["weights"])
+        return model
+    elif hasattr(obj, "predict"):
+        return obj
+    else:
+        raise ValueError(
+            f"ไฟล์ {path} ไม่ใช่โมเดลที่รองรับ (ไม่มี architecture/weights หรือ predict)"
+        )
+
 # -----------------------------
 # โหลดโมเดลและ Scaler
 # -----------------------------
-mlp_model = joblib.load("models\\mlp_model.pkl")
-scaler_X = joblib.load("models\\scaler_X.save")
-scaler_y = joblib.load("models\\scaler_y.save")
+mlp_model = load_keras_model_from_pkl("models/mlp_model.pkl")
+scaler_X = joblib.load("models/scaler_X.save")
+scaler_y = joblib.load("models/scaler_y.save")
 
-svr_model = joblib.load("models\\svr_agb_model.pkl")
-svr_scaler_X = joblib.load("models\\svr_scaler_X.save")
-svr_scaler_y = joblib.load("models\\svr_scaler_y.save")
+svr_model = joblib.load("models/svr_agb_model.pkl")
+svr_scaler_X = joblib.load("models/svr_scaler_X.save")
+svr_scaler_y = joblib.load("models/svr_scaler_y.save")
+
+print("✅ Models and scalers loaded successfully")
 
 # -----------------------------
-# Cloud Mask Function (Sentinel-2 SR → Surface Reflectance 0–1)
+# Cloud Mask Functions
 # -----------------------------
 def mask_s2_clouds_reflectance(image):
     """Masks clouds in Sentinel-2 SR and scales to reflectance (0–1)."""
@@ -36,12 +63,10 @@ def mask_s2_clouds_reflectance(image):
         .eq(0)
         .And(qa.bitwiseAnd(cirrus_bit_mask).eq(0))
     )
-    return image.updateMask(mask).divide(10000)  # scale 0–1
+    return image.updateMask(mask).divide(10000)
 
-# -----------------------------
-# Cloud Mask + DN scale (Sentinel-2 → THEOS-style DN 0–100)
-# -----------------------------
 def mask_s2_clouds_dn(image):
+    """Masks clouds and converts Sentinel-2 SR to THEOS-style DN 0–100."""
     qa = image.select('QA60')
     cloud_bit_mask = 1 << 10
     cirrus_bit_mask = 1 << 11
@@ -54,15 +79,15 @@ def mask_s2_clouds_dn(image):
 def index():
     return render_template('index.html')
 
-# -----------------------------
-# Endpoint: ดึง Sentinel-2 และ THEOS-style map tiles
-# -----------------------------
+# ==================================================
+# Endpoint: แสดง Sentinel-2 และ THEOS-style แผนที่
+# ==================================================
 @app.route('/get_map', methods=['POST'])
 def get_map():
     start = request.json['start']
     end = request.json['end']
 
-    # Sentinel-2 Surface Reflectance (0–1)
+    # Sentinel-2 SR (reflectance 0–1)
     collection_ref = (
         ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
         .filterDate(start, end)
@@ -70,11 +95,10 @@ def get_map():
         .map(mask_s2_clouds_reflectance)
     )
     image_ref = collection_ref.mean()
-
     vis_sentinel = {'bands': ['B4', 'B3', 'B2'], 'min': 0.0, 'max': 0.3, 'gamma': 1.0}
     map_id_sentinel = ee.Image(image_ref).getMapId(vis_sentinel)
 
-    # THEOS-style DN
+    # THEOS-style DN (0–100)
     collection_dn = (
         ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
         .filterDate(start, end)
@@ -82,7 +106,6 @@ def get_map():
         .map(mask_s2_clouds_dn)
     )
     image_dn = collection_dn.mean()
-
     vis_theos = {'bands': ['B4', 'B3', 'B2'], 'min': 0, 'max': 100, 'gamma': 1.0}
     map_id_theos = ee.Image(image_dn).getMapId(vis_theos)
 
@@ -91,15 +114,18 @@ def get_map():
         'theos_url': map_id_theos['tile_fetcher'].url_format
     })
 
-# -----------------------------
-# Endpoint: ดึงค่า Pixel Reflectance + predict models
-# -----------------------------
+# ==================================================
+# Endpoint: ดึงค่า Pixel + Predict Reflectance + AGB
+# ==================================================
 @app.route('/get_pixel', methods=['POST'])
 def get_pixel():
-    lat = float(request.json['lat'])
-    lon = float(request.json['lon'])
-    start = request.json['start']
-    end = request.json['end']
+    try:
+        lat = float(request.json['lat'])
+        lon = float(request.json['lon'])
+        start = request.json['start']
+        end = request.json['end']
+    except Exception as e:
+        return jsonify({"error": f"Invalid input: {e}"})
 
     point = ee.Geometry.Point([lon, lat])
 
@@ -112,17 +138,14 @@ def get_pixel():
 
     image = collection.mean()
 
+    # ดึงค่าพิกเซลจาก Sentinel-2
     bands = image.reduceRegion(
         reducer=ee.Reducer.first(),
         geometry=point,
         scale=10
     )
-
     pixel_data = bands.getInfo()
 
-    # -----------------------------
-    # Step 1: ดึงค่า Blue, Green, Red, NIR
-    # -----------------------------
     try:
         blue = float(pixel_data.get("B2", 0))
         green = float(pixel_data.get("B3", 0))
@@ -132,30 +155,30 @@ def get_pixel():
         return jsonify({"error": "invalid pixel values"})
 
     # -----------------------------
-    # Step 2: MLP → Field Reflectance
+    # Step 1: MLP → Field Reflectance
     # -----------------------------
-    X = np.array([[blue, green, red, nir]])*100
+    X = np.array([[blue, green, red, nir]]) * 100.0
     X_scaled = scaler_X.transform(X)
     y_pred_scaled = mlp_model.predict(X_scaled)
-    field_reflectance = scaler_y.inverse_transform(y_pred_scaled.reshape(1, -1)).ravel()
-
+    field_reflectance = scaler_y.inverse_transform(y_pred_scaled).ravel()
     field_blue, field_green, field_red, field_nir = field_reflectance
 
     # -----------------------------
-    # Step 3: คำนวณดัชนี 5 ตัว
+    # Step 2: คำนวณดัชนีพืชพรรณ 5 ตัว
     # -----------------------------
     indices = calculate_indices(field_blue, field_green, field_red, field_nir)
 
     # -----------------------------
-    # Step 4: SVR → Predict AGB
+    # Step 3: SVR → Predict AGB
     # -----------------------------
-    idx_vals = np.array([[indices["NDVI"], indices["TNDVI"], indices["SR"], indices["SAVI"], indices["MSAVI2"]]])
+    idx_vals = np.array([[indices["NDVI"], indices["TNDVI"], indices["SR"],
+                          indices["SAVI"], indices["MSAVI2"]]])
     idx_scaled = svr_scaler_X.transform(idx_vals)
     agb_scaled = svr_model.predict(idx_scaled)
     agb = svr_scaler_y.inverse_transform(agb_scaled.reshape(-1, 1)).ravel()[0]
 
     # -----------------------------
-    # รวมผลลัพธ์
+    # Step 4: รวมผลลัพธ์
     # -----------------------------
     pixel_data.update({
         "field_reflectance": {
