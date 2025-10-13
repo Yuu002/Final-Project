@@ -202,3 +202,535 @@ def calculate_indices(blue, green, red, nir):
         "SAVI": savi,
         "MSAVI2": msavi2
     }
+---
+#index.html
+<!DOCTYPE html>
+
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Sentinel-2 Viewer</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: #0f172a;
+  color: #e2e8f0;
+  overflow: hidden;
+}
+
+#map {
+  height: 100vh;
+  width: calc(100% - 420px);
+  float: left;
+  position: relative;
+}
+
+#sidebar {
+  width: 420px;
+  height: 100vh;
+  float: right;
+  background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+  overflow-y: auto;
+  box-shadow: -4px 0 24px rgba(0, 0, 0, 0.3);
+  backdrop-filter: blur(10px);
+}
+
+#sidebar::-webkit-scrollbar {
+  width: 8px;
+}
+
+#sidebar::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+#sidebar::-webkit-scrollbar-thumb {
+  background: rgba(96, 165, 250, 0.3);
+  border-radius: 4px;
+}
+
+#sidebar::-webkit-scrollbar-thumb:hover {
+  background: rgba(96, 165, 250, 0.5);
+}
+
+.header {
+  padding: 32px 28px;
+  background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.header h1 {
+  font-size: 28px;
+  font-weight: 700;
+  color: white;
+  margin-bottom: 6px;
+  letter-spacing: -0.5px;
+}
+
+.header p {
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 14px;
+  font-weight: 400;
+}
+
+.section {
+  padding: 24px 28px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  animation: fadeInUp 0.5s ease-out;
+}
+
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.section-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #60a5fa;
+  margin-bottom: 18px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.section-title::before {
+  content: '';
+  width: 4px;
+  height: 18px;
+  background: linear-gradient(180deg, #60a5fa, #3b82f6);
+  border-radius: 2px;
+}
+
+label {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #94a3b8;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+input[type="date"],
+input[type="number"] {
+  width: 100%;
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  color: #e2e8f0;
+  font-size: 14px;
+  font-family: inherit;
+  transition: all 0.3s ease;
+}
+
+input[type="date"]:focus,
+input[type="number"]:focus {
+  outline: none;
+  background: rgba(255, 255, 255, 0.08);
+  border-color: #60a5fa;
+  box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.1);
+}
+
+input[type="date"]:hover,
+input[type="number"]:hover {
+  border-color: rgba(96, 165, 250, 0.5);
+}
+
+button {
+  width: 100%;
+  padding: 14px 24px;
+  background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+  border: none;
+  border-radius: 10px;
+  color: white;
+  font-size: 15px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+  position: relative;
+  overflow: hidden;
+}
+
+button::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+  transition: left 0.5s ease;
+}
+
+button:hover::before {
+  left: 100%;
+}
+
+button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(59, 130, 246, 0.4);
+}
+
+button:active {
+  transform: translateY(0);
+}
+
+.data-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.data-card {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  padding: 14px 16px;
+  transition: all 0.3s ease;
+}
+
+.data-card:hover {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(96, 165, 250, 0.3);
+  transform: translateX(4px);
+}
+
+.data-label {
+  font-size: 12px;
+  color: #94a3b8;
+  margin-bottom: 6px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.data-value {
+  font-size: 18px;
+  color: #e2e8f0;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.data-value.highlight {
+  color: #60a5fa;
+}
+
+.coord-display {
+  background: rgba(59, 130, 246, 0.1);
+  border: 1px solid rgba(59, 130, 246, 0.2);
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin-bottom: 20px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.coord-display .coord-item {
+  flex: 1;
+}
+
+.coord-display .coord-label {
+  font-size: 11px;
+  color: #94a3b8;
+  margin-bottom: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.coord-display .coord-val {
+  font-size: 15px;
+  color: #60a5fa;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.empty-state {
+  text-align: center;
+  padding: 32px 20px;
+  color: #64748b;
+  font-size: 14px;
+}
+
+.badge {
+  display: inline-block;
+  padding: 4px 10px;
+  background: rgba(34, 197, 94, 0.1);
+  border: 1px solid rgba(34, 197, 94, 0.2);
+  border-radius: 6px;
+  color: #4ade80;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-left: 8px;
+}
+
+.leaflet-popup-content-wrapper {
+  background: rgba(15, 23, 42, 0.95);
+  color: #e2e8f0;
+  border-radius: 10px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+.leaflet-popup-tip {
+  background: rgba(15, 23, 42, 0.95);
+}
+
+input[type="date"]::-webkit-calendar-picker-indicator {
+  filter: invert(0.7);
+  cursor: pointer;
+}
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <div id="sidebar">
+    <div class="header">
+      <h1>🛰️ Sentinel-2 Viewer</h1>
+      <p>Earth Observation & Analysis Platform</p>
+    </div>
+<div class="section">
+  <div class="section-title">Date Range</div>
+  <label>Start Date</label>
+  <input type="date" id="start" value="2020-01-01">
+  
+  <label>End Date</label>
+  <input type="date" id="end" value="2020-01-15">
+  
+  <button id="loadMap">🔍 Load Satellite Imagery</button>
+</div>
+
+<div class="section">
+  <div class="section-title">Location Selection</div>
+  <label>Latitude</label>
+  <input type="number" id="lat" step="0.0001" placeholder="e.g., 19.2000">
+  
+  <label>Longitude</label>
+  <input type="number" id="lon" step="0.0001" placeholder="e.g., 100.1000">
+  
+  <button id="getPixel">📍 Analyze Point</button>
+</div>
+
+<div class="section">
+  <div class="section-title">Selected Location</div>
+  <div class="coord-display">
+    <div class="coord-item">
+      <div class="coord-label">Latitude</div>
+      <div class="coord-val" id="coordLat">-</div>
+    </div>
+    <div class="coord-item">
+      <div class="coord-label">Longitude</div>
+      <div class="coord-val" id="coordLon">-</div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="section-title">Sentinel-2 Reflectance</div>
+  <div class="data-grid">
+    <div class="data-card">
+      <div class="data-label">🔴 Red (B4)</div>
+      <div class="data-value" id="red">-</div>
+    </div>
+    <div class="data-card">
+      <div class="data-label">🟢 Green (B3)</div>
+      <div class="data-value" id="green">-</div>
+    </div>
+    <div class="data-card">
+      <div class="data-label">🔵 Blue (B2)</div>
+      <div class="data-value" id="blue">-</div>
+    </div>
+    <div class="data-card">
+      <div class="data-label">🌿 NIR (B8)</div>
+      <div class="data-value" id="nir">-</div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="section-title">Field Reflectance</div>
+  <div class="data-grid">
+    <div class="data-card">
+      <div class="data-label">Blue</div>
+      <div class="data-value" id="fblue">-</div>
+    </div>
+    <div class="data-card">
+      <div class="data-label">Green</div>
+      <div class="data-value" id="fgreen">-</div>
+    </div>
+    <div class="data-card">
+      <div class="data-label">Red</div>
+      <div class="data-value" id="fred">-</div>
+    </div>
+    <div class="data-card">
+      <div class="data-label">NIR</div>
+      <div class="data-value" id="fnir">-</div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="section-title">Vegetation Indices</div>
+  <div class="data-grid">
+    <div class="data-card">
+      <div class="data-label">NDVI</div>
+      <div class="data-value highlight" id="ndvi">-</div>
+    </div>
+    <div class="data-card">
+      <div class="data-label">TNDVI</div>
+      <div class="data-value highlight" id="tndvi">-</div>
+    </div>
+    <div class="data-card">
+      <div class="data-label">SR (Simple Ratio)</div>
+      <div class="data-value highlight" id="sr">-</div>
+    </div>
+    <div class="data-card">
+      <div class="data-label">SAVI</div>
+      <div class="data-value highlight" id="savi">-</div>
+    </div>
+    <div class="data-card">
+      <div class="data-label">MSAVI2</div>
+      <div class="data-value highlight" id="msavi2">-</div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="section-title">Biomass Estimation</div>
+  <div class="data-card">
+    <div class="data-label">Above Ground Biomass (AGB)</div>
+    <div class="data-value highlight" id="agb">-</div>
+  </div>
+</div>
+```
+
+  </div>
+
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+
+  <script>
+    var osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; OpenStreetMap contributors'
+    });
+
+    var map = L.map('map', {
+      center: [19.2, 100.1],
+      zoom: 10,
+      layers: [osm]
+    });
+
+    var layerControl = L.control.layers({"OpenStreetMap": osm}, {}, {collapsed: false}).addTo(map);
+    var s2layer = {};
+    var marker;
+
+    document.getElementById('loadMap').onclick = async function() {
+      let start = document.getElementById('start').value;
+      let end = document.getElementById('end').value;
+      let resp = await fetch('/get_map', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({start, end})
+      });
+      let data = await resp.json();
+
+      if(s2layer.sentinel) {
+        map.removeLayer(s2layer.sentinel);
+        map.removeLayer(s2layer.theos);
+        layerControl.removeLayer(s2layer.sentinel);
+        layerControl.removeLayer(s2layer.theos);
+      }
+
+      let sentinelLayer = L.tileLayer(data.sentinel_url);
+      let theosLayer = L.tileLayer(data.theos_url);
+      sentinelLayer.addTo(map);
+      s2layer = { sentinel: sentinelLayer, theos: theosLayer };
+      layerControl.addOverlay(sentinelLayer, "Sentinel-2 Natural");
+      layerControl.addOverlay(theosLayer, "THEOS-style");
+    };
+
+    function showMarker(lat, lon) {
+      if(marker) map.removeLayer(marker);
+      marker = L.marker([lat, lon]).addTo(map);
+      marker.bindPopup(`<strong>Selected Point</strong><br>Lat: ${lat.toFixed(6)}<br>Lon: ${lon.toFixed(6)}`).openPopup();
+    }
+
+    async function getPixelData(lat, lon, start, end) {
+      let resp = await fetch('/get_pixel', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({lat, lon, start, end})
+      });
+      let pixel = await resp.json();
+
+      function formatVal(val) {
+        return (val !== null && val !== undefined) ? Number(val).toFixed(5) : '-';
+      }
+
+      document.getElementById('coordLat').innerText = lat.toFixed(6);
+      document.getElementById('coordLon').innerText = lon.toFixed(6);
+      document.getElementById('red').innerText   = formatVal(pixel['B4']);
+      document.getElementById('green').innerText = formatVal(pixel['B3']);
+      document.getElementById('blue').innerText  = formatVal(pixel['B2']);
+      document.getElementById('nir').innerText   = formatVal(pixel['B8']);
+
+      if(pixel.field_reflectance){
+        document.getElementById('fblue').innerText  = formatVal(pixel.field_reflectance.Blue);
+        document.getElementById('fgreen').innerText = formatVal(pixel.field_reflectance.Green);
+        document.getElementById('fred').innerText   = formatVal(pixel.field_reflectance.Red);
+        document.getElementById('fnir').innerText   = formatVal(pixel.field_reflectance.NIR);
+      }
+
+      if(pixel.indices){
+        document.getElementById('ndvi').innerText  = formatVal(pixel.indices.NDVI);
+        document.getElementById('tndvi').innerText = formatVal(pixel.indices.TNDVI);
+        document.getElementById('sr').innerText    = formatVal(pixel.indices.SR);
+        document.getElementById('savi').innerText  = formatVal(pixel.indices.SAVI);
+        document.getElementById('msavi2').innerText= formatVal(pixel.indices.MSAVI2);
+      }
+
+      document.getElementById('agb').innerText = formatVal(pixel.AGB);
+    }
+
+    document.getElementById('getPixel').onclick = async function() {
+      let lat = parseFloat(document.getElementById('lat').value);
+      let lon = parseFloat(document.getElementById('lon').value);
+      let start = document.getElementById('start').value;
+      let end = document.getElementById('end').value;
+      if(isNaN(lat) || isNaN(lon)) { alert("Please enter valid coordinates!"); return; }
+      map.setView([lat, lon], 14);
+      showMarker(lat, lon);
+      await getPixelData(lat, lon, start, end);
+    };
+
+    map.on('click', async function(e){
+      let lat = e.latlng.lat;
+      let lon = e.latlng.lng;
+      document.getElementById('lat').value = lat.toFixed(6);
+      document.getElementById('lon').value = lon.toFixed(6);
+      showMarker(lat, lon);
+      let start = document.getElementById('start').value;
+      let end = document.getElementById('end').value;
+      await getPixelData(lat, lon, start, end);
+    });
+  </script>
+
+</body>
+</html>
