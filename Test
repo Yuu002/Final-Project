@@ -134,12 +134,12 @@ def get_pixel():
     # -----------------------------
     # Step 2: MLP → Field Reflectance
     # -----------------------------
-    X = np.array([[blue, green, red, nir]])*100
+    X = np.array([[blue, green, red, nir]])
     X_scaled = scaler_X.transform(X)
     y_pred_scaled = mlp_model.predict(X_scaled)
-    field_reflectance = scaler_y.inverse_transform(y_pred_scaled.reshape(1, -1)).ravel()
+    field_reflectance = scaler_y.inverse_transform(y_pred_scaled)
 
-    field_blue, field_green, field_red, field_nir = field_reflectance
+    field_blue, field_green, field_red, field_nir = field_reflectance.ravel
 
     # -----------------------------
     # Step 3: คำนวณดัชนี 5 ตัว
