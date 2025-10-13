@@ -1,269 +1,3 @@
-# app.py
-from flask import Flask, render_template, request, jsonify
-import ee
-import joblib
-import numpy as np
-from indices import calculate_indices  # ใช้สูตรที่คุณเขียนไว้ใน indices.py
-
-# -----------------------------
-# Init Earth Engine
-# -----------------------------
-ee.Initialize(project='map-web-473508')
-
-app = Flask(__name__)
-
-# -----------------------------
-# โหลดโมเดลและ Scaler
-# -----------------------------
-mlp_model = joblib.load("models\\mlp_model.pkl")
-scaler_X = joblib.load("models\\scaler_X.save")
-scaler_y = joblib.load("models\\scaler_y.save")
-
-ref_model = joblib.load("models\\ref_model.pkl")
-ref_scaler_X = joblib.load("models\\ref_scaler_X.save")
-ref_scaler_y = joblib.load("models\\ref_scaler_y.save")
-
-svr_model = joblib.load("models\\svr_agb_model.pkl")
-svr_scaler_X = joblib.load("models\\svr_scaler_X.save")
-svr_scaler_y = joblib.load("models\\svr_scaler_y.save")
-
-# -----------------------------
-# Cloud Mask Function (Sentinel-2 SR → Surface Reflectance 0–1)
-# -----------------------------
-def mask_s2_clouds_reflectance(image):
-    """Masks clouds in Sentinel-2 SR and scales to reflectance (0–1)."""
-    qa = image.select('QA60')
-    cloud_bit_mask = 1 << 10
-    cirrus_bit_mask = 1 << 11
-    mask = (
-        qa.bitwiseAnd(cloud_bit_mask)
-        .eq(0)
-        .And(qa.bitwiseAnd(cirrus_bit_mask).eq(0))
-    )
-    return image.updateMask(mask).divide(10000)  # scale 0–1
-
-# -----------------------------
-# Cloud Mask + DN scale (Sentinel-2 → THEOS-style DN 0–100)
-# -----------------------------
-def mask_s2_clouds_dn(image):
-    qa = image.select('QA60')
-    cloud_bit_mask = 1 << 10
-    cirrus_bit_mask = 1 << 11
-    mask = qa.bitwiseAnd(cloud_bit_mask).eq(0).And(qa.bitwiseAnd(cirrus_bit_mask).eq(0))
-    dn_image = image.divide(10000).multiply(100).toUint16()
-    return dn_image.updateMask(mask)
-
-# -----------------------------
-@app.route('/')
-def index():
-    return render_template('index.html')
-
-# -----------------------------
-# Endpoint: ดึง Sentinel-2 และ THEOS-style map tiles
-# -----------------------------
-@app.route('/get_map', methods=['POST'])
-def get_map():
-    start = request.json['start']
-    end = request.json['end']
-
-    # Sentinel-2 Surface Reflectance (0–1)
-    collection_ref = (
-        ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
-        .filterDate(start, end)
-        .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
-        .map(mask_s2_clouds_reflectance)
-    )
-    image_ref = collection_ref.mean()
-
-    vis_sentinel = {'bands': ['B4', 'B3', 'B2'], 'min': 0.0, 'max': 0.3, 'gamma': 1.0}
-    map_id_sentinel = ee.Image(image_ref).getMapId(vis_sentinel)
-
-    # THEOS-style DN
-    collection_dn = (
-        ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
-        .filterDate(start, end)
-        .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
-        .map(mask_s2_clouds_dn)
-    )
-    image_dn = collection_dn.mean()
-
-    vis_theos = {'bands': ['B4', 'B3', 'B2'], 'min': 0, 'max': 100, 'gamma': 1.0}
-    map_id_theos = ee.Image(image_dn).getMapId(vis_theos)
-
-    return jsonify({
-        'sentinel_url': map_id_sentinel['tile_fetcher'].url_format,
-        'theos_url': map_id_theos['tile_fetcher'].url_format
-    })
-
-# -----------------------------
-# Endpoint: ดึงค่า Pixel Reflectance + predict models
-# -----------------------------
-@app.route('/get_pixel', methods=['POST'])
-def get_pixel():
-    lat = float(request.json['lat'])
-    lon = float(request.json['lon'])
-    start = request.json['start']
-    end = request.json['end']
-
-    point = ee.Geometry.Point([lon, lat])
-
-    collection = (
-        ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
-        .filterDate(start, end)
-        .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
-        .map(mask_s2_clouds_reflectance)
-    )
-
-    image = collection.mean()
-
-    bands = image.reduceRegion(
-        reducer=ee.Reducer.first(),
-        geometry=point,
-        scale=10
-    )
-
-    pixel_data = bands.getInfo()
-
-    # -----------------------------
-    # Step 1: ดึงค่า Blue, Green, Red, NIR
-    # -----------------------------
-    try:
-        blue = float(pixel_data.get("B2", 0))
-        green = float(pixel_data.get("B3", 0))
-        red = float(pixel_data.get("B4", 0))
-        nir = float(pixel_data.get("B8", 0))
-    except:
-        return jsonify({"error": "invalid pixel values"})
-
-    # -----------------------------
-    # Step 2: MLP → Field Reflectance
-    # -----------------------------
-    X = np.array([[blue, green, red, nir]])
-    X_scaled = scaler_X.transform(X)
-    y_pred_scaled = mlp_model.predict(X_scaled)
-    field_reflectance = scaler_y.inverse_transform(y_pred_scaled)
-
-    # -----------------------------
-    # Step 2.5: REF → Cor Field Reflectance
-    # -----------------------------
-    ref_X_scaled = ref_scaler_X.transform(field_reflectance)
-    ref_y_pred_scaled = ref_model.predict(ref_X_scaled)
-    ref_field_reflectance = ref_scaler_y.inverse_transform(ref_y_pred_scaled)
-
-    ref_blue, ref_green, ref_red, ref_nir = ref_field_reflectance.ravel()
-
-    # -----------------------------
-    # Step 3: คำนวณดัชนี 5 ตัว
-    # -----------------------------
-    indices = calculate_indices(ref_blue, ref_green, ref_red, ref_nir)
-
-    # -----------------------------
-    # Step 4: SVR → Predict AGB
-    # -----------------------------
-    idx_vals = np.array([[indices["NDVI"], indices["TNDVI"], indices["SR"], indices["SAVI"], indices["MSAVI2"]]])
-    idx_scaled = svr_scaler_X.transform(idx_vals)
-    agb_scaled = svr_model.predict(idx_scaled)
-    agb = svr_scaler_y.inverse_transform(agb_scaled.reshape(-1, 1)).ravel()[0]
-
-    # -----------------------------
-    # รวมผลลัพธ์
-    # -----------------------------
-    pixel_data.update({
-        "field_reflectance": {
-            "Blue": ref_blue,
-            "Green": ref_green,
-            "Red": ref_red,
-            "NIR": ref_nir
-        },
-        "indices": indices,
-        "AGB": agb
-    })
-
-    return jsonify(pixel_data)
-
-# -----------------------------
-# Endpoint: ดึงค่า Area Reflectance + predict models
-# -----------------------------
-@app.route('/get_area', methods=['POST'])
-def get_area():
-    start = request.json['start']
-    end = request.json['end']
-    area = request.json['area']
-
-    sw_lat = float(area['sw_lat'])
-    sw_lon = float(area['sw_lon'])
-    ne_lat = float(area['ne_lat'])
-    ne_lon = float(area['ne_lon'])
-    geom = ee.Geometry.Rectangle([sw_lon, sw_lat, ne_lon, ne_lat])
-
-    collection = (
-        ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
-        .filterDate(start, end)
-        .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
-        .map(mask_s2_clouds_reflectance)
-    )
-
-    image = collection.mean()
-    bands = image.reduceRegion(reducer=ee.Reducer.mean(), geometry=geom, scale=10)
-    pixel_data = bands.getInfo()
-
-    # -----------------------------
-    # Step 1: ดึงค่า Blue, Green, Red, NIR (ค่าเฉลี่ย)
-    # -----------------------------
-    blue = float(pixel_data.get("B2", 0))
-    green = float(pixel_data.get("B3", 0))
-    red = float(pixel_data.get("B4", 0))
-    nir = float(pixel_data.get("B8", 0))
-
-    # -----------------------------
-    # Step 2: MLP → Field Reflectance
-    # -----------------------------
-    X = np.array([[blue, green, red, nir]])
-    X_scaled = scaler_X.transform(X)
-    y_pred_scaled = mlp_model.predict(X_scaled)
-    field_reflectance = scaler_y.inverse_transform(y_pred_scaled)
-
-    # -----------------------------
-    # Step 2.5: REF → Cor Field Reflectance
-    # -----------------------------
-    ref_X_scaled = ref_scaler_X.transform(field_reflectance)
-    ref_y_pred_scaled = ref_model.predict(ref_X_scaled)
-    ref_field_reflectance = ref_scaler_y.inverse_transform(ref_y_pred_scaled)
-    ref_blue, ref_green, ref_red, ref_nir = ref_field_reflectance.ravel()
-
-    # -----------------------------
-    # Step 3: คำนวณดัชนี 5 ตัว
-    # -----------------------------
-    indices = calculate_indices(ref_blue, ref_green, ref_red, ref_nir)
-
-    # -----------------------------
-    # Step 4: SVR → Predict AGB
-    # -----------------------------
-    idx_vals = np.array([[indices["NDVI"], indices["TNDVI"], indices["SR"], indices["SAVI"], indices["MSAVI2"]]])
-    idx_scaled = svr_scaler_X.transform(idx_vals)
-    agb_scaled = svr_model.predict(idx_scaled)
-    agb = svr_scaler_y.inverse_transform(agb_scaled.reshape(-1, 1)).ravel()[0]
-
-    # -----------------------------
-    # รวมผลลัพธ์
-    # -----------------------------
-    pixel_data.update({
-        "field_reflectance": {
-            "Blue": ref_blue,
-            "Green": ref_green,
-            "Red": ref_red,
-            "NIR": ref_nir
-        },
-        "indices": indices,
-        "AGB": agb
-    })
-
-    return jsonify(pixel_data)
-
-# -----------------------------
-if __name__ == '__main__':
-    app.run(debug=True)
---
 <!DOCTYPE html>
 
 <html>
@@ -280,285 +14,337 @@ if __name__ == '__main__':
     }
 
 body {
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  background: #0f172a;
-  color: #e2e8f0;
-  overflow: hidden;
+font-family: ‘Inter’, -apple-system, BlinkMacSystemFont, ‘Segoe UI’, sans-serif;
+background: #0f172a;
+color: #e2e8f0;
+overflow: hidden;
 }
 
 #map {
-  height: 100vh;
-  width: calc(100% - 420px);
-  float: left;
-  position: relative;
+height: 100vh;
+width: calc(100% - 420px);
+float: left;
+position: relative;
 }
 
 #sidebar {
-  width: 420px;
-  height: 100vh;
-  float: right;
-  background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
-  overflow-y: auto;
-  box-shadow: -4px 0 24px rgba(0, 0, 0, 0.3);
-  backdrop-filter: blur(10px);
+width: 420px;
+height: 100vh;
+float: right;
+background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+overflow-y: auto;
+box-shadow: -4px 0 24px rgba(0, 0, 0, 0.3);
+backdrop-filter: blur(10px);
 }
 
 #sidebar::-webkit-scrollbar {
-  width: 8px;
+width: 8px;
 }
 
 #sidebar::-webkit-scrollbar-track {
-  background: rgba(255, 255, 255, 0.05);
+background: rgba(255, 255, 255, 0.05);
 }
 
 #sidebar::-webkit-scrollbar-thumb {
-  background: rgba(96, 165, 250, 0.3);
-  border-radius: 4px;
+background: rgba(96, 165, 250, 0.3);
+border-radius: 4px;
 }
 
 #sidebar::-webkit-scrollbar-thumb:hover {
-  background: rgba(96, 165, 250, 0.5);
+background: rgba(96, 165, 250, 0.5);
 }
 
 .header {
-  padding: 32px 28px;
-  background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+padding: 32px 28px;
+background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+border-bottom: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 .header h1 {
-  font-size: 28px;
-  font-weight: 700;
-  color: white;
-  margin-bottom: 6px;
-  letter-spacing: -0.5px;
+font-size: 28px;
+font-weight: 700;
+color: white;
+margin-bottom: 6px;
+letter-spacing: -0.5px;
 }
 
 .header p {
-  color: rgba(255, 255, 255, 0.8);
-  font-size: 14px;
-  font-weight: 400;
+color: rgba(255, 255, 255, 0.8);
+font-size: 14px;
+font-weight: 400;
 }
 
 .section {
-  padding: 24px 28px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-  animation: fadeInUp 0.5s ease-out;
+padding: 24px 28px;
+border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+animation: fadeInUp 0.5s ease-out;
 }
 
 @keyframes fadeInUp {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+from {
+opacity: 0;
+transform: translateY(10px);
+}
+to {
+opacity: 1;
+transform: translateY(0);
+}
 }
 
 .section-title {
-  font-size: 16px;
-  font-weight: 600;
-  color: #60a5fa;
-  margin-bottom: 18px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
+font-size: 16px;
+font-weight: 600;
+color: #60a5fa;
+margin-bottom: 18px;
+display: flex;
+align-items: center;
+gap: 8px;
 }
 
 .section-title::before {
-  content: '';
-  width: 4px;
-  height: 18px;
-  background: linear-gradient(180deg, #60a5fa, #3b82f6);
-  border-radius: 2px;
+content: ‘’;
+width: 4px;
+height: 18px;
+background: linear-gradient(180deg, #60a5fa, #3b82f6);
+border-radius: 2px;
+}
+
+.mode-selector {
+display: flex;
+gap: 12px;
+margin-bottom: 16px;
+}
+
+.mode-btn {
+flex: 1;
+padding: 12px 16px;
+background: rgba(255, 255, 255, 0.05);
+border: 2px solid rgba(255, 255, 255, 0.1);
+border-radius: 8px;
+color: #94a3b8;
+font-size: 13px;
+font-weight: 600;
+cursor: pointer;
+transition: all 0.3s ease;
+text-transform: uppercase;
+letter-spacing: 0.5px;
+}
+
+.mode-btn:hover {
+border-color: rgba(96, 165, 250, 0.3);
+color: #e2e8f0;
+}
+
+.mode-btn.active {
+background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+border-color: #3b82f6;
+color: white;
+box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+}
+
+.mode-content {
+display: none;
+}
+
+.mode-content.active {
+display: block;
 }
 
 label {
-  display: block;
-  margin-bottom: 8px;
-  font-size: 13px;
-  font-weight: 500;
-  color: #94a3b8;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
+display: block;
+margin-bottom: 8px;
+font-size: 13px;
+font-weight: 500;
+color: #94a3b8;
+text-transform: uppercase;
+letter-spacing: 0.5px;
 }
 
-input[type="date"],
-input[type="number"] {
-  width: 100%;
-  padding: 12px 16px;
-  margin-bottom: 16px;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 10px;
-  color: #e2e8f0;
-  font-size: 14px;
-  font-family: inherit;
-  transition: all 0.3s ease;
+input[type=“date”],
+input[type=“number”] {
+width: 100%;
+padding: 12px 16px;
+margin-bottom: 16px;
+background: rgba(255, 255, 255, 0.05);
+border: 1px solid rgba(255, 255, 255, 0.1);
+border-radius: 10px;
+color: #e2e8f0;
+font-size: 14px;
+font-family: inherit;
+transition: all 0.3s ease;
 }
 
-input[type="date"]:focus,
-input[type="number"]:focus {
-  outline: none;
-  background: rgba(255, 255, 255, 0.08);
-  border-color: #60a5fa;
-  box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.1);
+input[type=“date”]:focus,
+input[type=“number”]:focus {
+outline: none;
+background: rgba(255, 255, 255, 0.08);
+border-color: #60a5fa;
+box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.1);
 }
 
-input[type="date"]:hover,
-input[type="number"]:hover {
-  border-color: rgba(96, 165, 250, 0.5);
+input[type=“date”]:hover,
+input[type=“number”]:hover {
+border-color: rgba(96, 165, 250, 0.5);
 }
 
 button {
-  width: 100%;
-  padding: 14px 24px;
-  background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
-  border: none;
-  border-radius: 10px;
-  color: white;
-  font-size: 15px;
-  font-weight: 600;
-  font-family: inherit;
-  cursor: pointer;
-  transition: all 0.3s ease;
-  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
-  position: relative;
-  overflow: hidden;
+width: 100%;
+padding: 14px 24px;
+background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+border: none;
+border-radius: 10px;
+color: white;
+font-size: 15px;
+font-weight: 600;
+font-family: inherit;
+cursor: pointer;
+transition: all 0.3s ease;
+box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+position: relative;
+overflow: hidden;
 }
 
 button::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: -100%;
-  width: 100%;
-  height: 100%;
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
-  transition: left 0.5s ease;
+content: ‘’;
+position: absolute;
+top: 0;
+left: -100%;
+width: 100%;
+height: 100%;
+background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+transition: left 0.5s ease;
 }
 
 button:hover::before {
-  left: 100%;
+left: 100%;
 }
 
 button:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 6px 20px rgba(59, 130, 246, 0.4);
+transform: translateY(-2px);
+box-shadow: 0 6px 20px rgba(59, 130, 246, 0.4);
 }
 
 button:active {
-  transform: translateY(0);
+transform: translateY(0);
 }
 
 .data-grid {
-  display: grid;
-  gap: 12px;
+display: grid;
+gap: 12px;
 }
 
 .data-card {
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 10px;
-  padding: 14px 16px;
-  transition: all 0.3s ease;
+background: rgba(255, 255, 255, 0.03);
+border: 1px solid rgba(255, 255, 255, 0.08);
+border-radius: 10px;
+padding: 14px 16px;
+transition: all 0.3s ease;
 }
 
 .data-card:hover {
-  background: rgba(255, 255, 255, 0.05);
-  border-color: rgba(96, 165, 250, 0.3);
-  transform: translateX(4px);
+background: rgba(255, 255, 255, 0.05);
+border-color: rgba(96, 165, 250, 0.3);
+transform: translateX(4px);
 }
 
 .data-label {
-  font-size: 12px;
-  color: #94a3b8;
-  margin-bottom: 6px;
-  font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
+font-size: 12px;
+color: #94a3b8;
+margin-bottom: 6px;
+font-weight: 500;
+text-transform: uppercase;
+letter-spacing: 0.5px;
 }
 
 .data-value {
-  font-size: 18px;
-  color: #e2e8f0;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
+font-size: 18px;
+color: #e2e8f0;
+font-weight: 600;
+font-variant-numeric: tabular-nums;
 }
 
 .data-value.highlight {
-  color: #60a5fa;
+color: #60a5fa;
 }
 
 .coord-display {
-  background: rgba(59, 130, 246, 0.1);
-  border: 1px solid rgba(59, 130, 246, 0.2);
-  border-radius: 10px;
-  padding: 14px 16px;
-  margin-bottom: 20px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
+background: rgba(59, 130, 246, 0.1);
+border: 1px solid rgba(59, 130, 246, 0.2);
+border-radius: 10px;
+padding: 14px 16px;
+margin-bottom: 20px;
+display: flex;
+justify-content: space-between;
+align-items: center;
 }
 
 .coord-display .coord-item {
-  flex: 1;
+flex: 1;
 }
 
 .coord-display .coord-label {
-  font-size: 11px;
-  color: #94a3b8;
-  margin-bottom: 4px;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
+font-size: 11px;
+color: #94a3b8;
+margin-bottom: 4px;
+text-transform: uppercase;
+letter-spacing: 0.5px;
 }
 
 .coord-display .coord-val {
-  font-size: 15px;
-  color: #60a5fa;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
+font-size: 15px;
+color: #60a5fa;
+font-weight: 600;
+font-variant-numeric: tabular-nums;
 }
 
 .empty-state {
-  text-align: center;
-  padding: 32px 20px;
-  color: #64748b;
-  font-size: 14px;
+text-align: center;
+padding: 32px 20px;
+color: #64748b;
+font-size: 14px;
 }
 
 .badge {
-  display: inline-block;
-  padding: 4px 10px;
-  background: rgba(34, 197, 94, 0.1);
-  border: 1px solid rgba(34, 197, 94, 0.2);
-  border-radius: 6px;
-  color: #4ade80;
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  margin-left: 8px;
+display: inline-block;
+padding: 4px 10px;
+background: rgba(34, 197, 94, 0.1);
+border: 1px solid rgba(34, 197, 94, 0.2);
+border-radius: 6px;
+color: #4ade80;
+font-size: 11px;
+font-weight: 600;
+text-transform: uppercase;
+letter-spacing: 0.5px;
+margin-left: 8px;
 }
 
 .leaflet-popup-content-wrapper {
-  background: rgba(15, 23, 42, 0.95);
-  color: #e2e8f0;
-  border-radius: 10px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+background: rgba(15, 23, 42, 0.95);
+color: #e2e8f0;
+border-radius: 10px;
+box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
 }
 
 .leaflet-popup-tip {
-  background: rgba(15, 23, 42, 0.95);
+background: rgba(15, 23, 42, 0.95);
 }
 
-input[type="date"]::-webkit-calendar-picker-indicator {
-  filter: invert(0.7);
-  cursor: pointer;
+input[type=“date”]::-webkit-calendar-picker-indicator {
+filter: invert(0.7);
+cursor: pointer;
 }
-  </style>
+
+.info-text {
+font-size: 12px;
+color: #64748b;
+margin-bottom: 16px;
+padding: 12px;
+background: rgba(59, 130, 246, 0.05);
+border-left: 3px solid #60a5fa;
+border-radius: 4px;
+}
+</style>
+
 </head>
 <body>
   <div id="map"></div>
@@ -567,26 +353,63 @@ input[type="date"]::-webkit-calendar-picker-indicator {
       <h1>🛰️ Sentinel-2 Viewer</h1>
       <p>Earth Observation & Analysis Platform</p>
     </div>
+
 <div class="section">
   <div class="section-title">Date Range</div>
   <label>Start Date</label>
   <input type="date" id="start" value="2020-01-01">
-  
-  <label>End Date</label>
-  <input type="date" id="end" value="2020-01-15">
-  
-  <button id="loadMap">🔍 Load Satellite Imagery</button>
+
+<label>End Date</label>
+<input type="date" id="end" value="2020-01-15">
+
+<button id="loadMap">🔍 Load Satellite Imagery</button>
+
 </div>
 
 <div class="section">
-  <div class="section-title">Location Selection</div>
-  <label>Latitude</label>
-  <input type="number" id="lat" step="0.0001" placeholder="e.g., 19.2000">
-  
-  <label>Longitude</label>
-  <input type="number" id="lon" step="0.0001" placeholder="e.g., 100.1000">
-  
-  <button id="getPixel">📍 Analyze Point</button>
+  <div class="section-title">Analysis Mode</div>
+  <div class="mode-selector">
+    <button class="mode-btn active" data-mode="point">📍 Point</button>
+    <button class="mode-btn" data-mode="area">🗺️ Area</button>
+  </div>
+
+  <!-- Point Mode Content -->
+
+  <div class="mode-content active" id="point-mode">
+    <label>Latitude</label>
+    <input type="number" id="lat" step="0.0001" placeholder="e.g., 19.2000">
+
+```
+<label>Longitude</label>
+<input type="number" id="lon" step="0.0001" placeholder="e.g., 100.1000">
+
+<button id="getPixel">📍 Analyze Point</button>
+<div class="info-text">💡 Click on the map or enter coordinates to analyze a single point.</div>
+```
+
+  </div>
+
+  <!-- Area Mode Content -->
+
+  <div class="mode-content" id="area-mode">
+    <label>Southwest Latitude</label>
+    <input type="number" id="sw_lat" step="0.0001" placeholder="e.g., 19.0000">
+
+```
+<label>Southwest Longitude</label>
+<input type="number" id="sw_lon" step="0.0001" placeholder="e.g., 100.0000">
+
+<label>Northeast Latitude</label>
+<input type="number" id="ne_lat" step="0.0001" placeholder="e.g., 19.4000">
+
+<label>Northeast Longitude</label>
+<input type="number" id="ne_lon" step="0.0001" placeholder="e.g., 100.4000">
+
+<button id="getArea">🗺️ Analyze Area</button>
+<div class="info-text">💡 Draw a rectangle on the map or enter coordinates to analyze a region.</div>
+```
+
+  </div>
 </div>
 
 <div class="section">
@@ -680,11 +503,13 @@ input[type="date"]::-webkit-calendar-picker-indicator {
     <div class="data-value highlight" id="agb">-</div>
   </div>
 </div>
-```
-
   </div>
 
   <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+
+  <script src="https://unpkg.com/leaflet-draw/dist/leaflet.draw.js"></script>
+
+  <link rel="stylesheet" href="https://unpkg.com/leaflet-draw/dist/leaflet.draw.css"/>
 
   <script>
     var osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -700,6 +525,25 @@ input[type="date"]::-webkit-calendar-picker-indicator {
     var layerControl = L.control.layers({"OpenStreetMap": osm}, {}, {collapsed: false}).addTo(map);
     var s2layer = {};
     var marker;
+    var rectangle;
+    var currentMode = 'point';
+
+    // Mode switching
+    document.querySelectorAll('.mode-btn').forEach(btn => {
+      btn.addEventListener('click', function() {
+        document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.mode-content').forEach(c => c.classList.remove('active'));
+        
+        this.classList.add('active');
+        currentMode = this.getAttribute('data-mode');
+        document.getElementById(currentMode + '-mode').classList.add('active');
+        
+        // Clear map markers/rectangles when switching modes
+        if(marker) map.removeLayer(marker);
+        if(rectangle) map.removeLayer(rectangle);
+        clearResults();
+      });
+    });
 
     document.getElementById('loadMap').onclick = async function() {
       let start = document.getElementById('start').value;
@@ -730,6 +574,37 @@ input[type="date"]::-webkit-calendar-picker-indicator {
       if(marker) map.removeLayer(marker);
       marker = L.marker([lat, lon]).addTo(map);
       marker.bindPopup(`<strong>Selected Point</strong><br>Lat: ${lat.toFixed(6)}<br>Lon: ${lon.toFixed(6)}`).openPopup();
+    }
+
+    function showRectangle(sw_lat, sw_lon, ne_lat, ne_lon) {
+      if(rectangle) map.removeLayer(rectangle);
+      rectangle = L.rectangle([[sw_lat, sw_lon], [ne_lat, ne_lon]], {
+        color: '#60a5fa',
+        weight: 2,
+        opacity: 0.8,
+        fill: true,
+        fillOpacity: 0.1
+      }).addTo(map);
+      map.fitBounds(rectangle.getBounds());
+    }
+
+    function clearResults() {
+      document.getElementById('coordLat').innerText = '-';
+      document.getElementById('coordLon').innerText = '-';
+      document.getElementById('red').innerText = '-';
+      document.getElementById('green').innerText = '-';
+      document.getElementById('blue').innerText = '-';
+      document.getElementById('nir').innerText = '-';
+      document.getElementById('fblue').innerText = '-';
+      document.getElementById('fgreen').innerText = '-';
+      document.getElementById('fred').innerText = '-';
+      document.getElementById('fnir').innerText = '-';
+      document.getElementById('ndvi').innerText = '-';
+      document.getElementById('tndvi').innerText = '-';
+      document.getElementById('sr').innerText = '-';
+      document.getElementById('savi').innerText = '-';
+      document.getElementById('msavi2').innerText = '-';
+      document.getElementById('agb').innerText = '-';
     }
 
     async function getPixelData(lat, lon, start, end) {
@@ -771,6 +646,45 @@ input[type="date"]::-webkit-calendar-picker-indicator {
       document.getElementById('agb').innerText = formatVal(pixel.AGB);
     }
 
+    async function getAreaData(area, start, end) {
+      let resp = await fetch('/get_area', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({area, start, end})
+      });
+      let data = await resp.json();
+
+      function formatVal(val) {
+        if (val == null || val == undefined) return '-';
+        let num = Number(val);
+        return num.toFixed(3);
+      }
+
+      document.getElementById('coordLat').innerText = ((area.sw_lat + area.ne_lat) / 2).toFixed(6);
+      document.getElementById('coordLon').innerText = ((area.sw_lon + area.ne_lon) / 2).toFixed(6);
+      document.getElementById('red').innerText   = formatVal(data['B4']);
+      document.getElementById('green').innerText = formatVal(data['B3']);
+      document.getElementById('blue').innerText  = formatVal(data['B2']);
+      document.getElementById('nir').innerText   = formatVal(data['B8']);
+
+      if(data.field_reflectance){
+        document.getElementById('fblue').innerText  = formatVal(data.field_reflectance.Blue);
+        document.getElementById('fgreen').innerText = formatVal(data.field_reflectance.Green);
+        document.getElementById('fred').innerText   = formatVal(data.field_reflectance.Red);
+        document.getElementById('fnir').innerText   = formatVal(data.field_reflectance.NIR);
+      }
+
+      if(data.indices){
+        document.getElementById('ndvi').innerText  = formatVal(data.indices.NDVI);
+        document.getElementById('tndvi').innerText = formatVal(data.indices.TNDVI);
+        document.getElementById('sr').innerText    = formatVal(data.indices.SR);
+        document.getElementById('savi').innerText  = formatVal(data.indices.SAVI);
+        document.getElementById('msavi2').innerText= formatVal(data.indices.MSAVI2);
+      }
+
+      document.getElementById('agb').innerText = formatVal(data.AGB);
+    }
+
     document.getElementById('getPixel').onclick = async function() {
       let lat = parseFloat(document.getElementById('lat').value);
       let lon = parseFloat(document.getElementById('lon').value);
@@ -782,15 +696,56 @@ input[type="date"]::-webkit-calendar-picker-indicator {
       await getPixelData(lat, lon, start, end);
     };
 
-    map.on('click', async function(e){
-      let lat = e.latlng.lat;
-      let lon = e.latlng.lng;
-      document.getElementById('lat').value = lat.toFixed(6);
-      document.getElementById('lon').value = lon.toFixed(6);
-      showMarker(lat, lon);
+    document.getElementById('getArea').onclick = async function() {
+      let sw_lat = parseFloat(document.getElementById('sw_lat').value);
+      let sw_lon = parseFloat(document.getElementById('sw_lon').value);
+      let ne_lat = parseFloat(document.getElementById('ne_lat').value);
+      let ne_lon = parseFloat(document.getElementById('ne_lon').value);
       let start = document.getElementById('start').value;
       let end = document.getElementById('end').value;
-      await getPixelData(lat, lon, start, end);
+      
+      if(isNaN(sw_lat) || isNaN(sw_lon) || isNaN(ne_lat) || isNaN(ne_lon)) { 
+        alert("Please enter valid coordinates!"); 
+        return; 
+      }
+      
+      let area = {sw_lat, sw_lon, ne_lat, ne_lon};
+      showRectangle(sw_lat, sw_lon, ne_lat, ne_lon);
+      await getAreaData(area, start, end);
+    };
+
+    map.on('click', async function(e){
+      if(currentMode === 'point') {
+        let lat = e.latlng.lat;
+        let lon = e.latlng.lng;
+        document.getElementById('lat').value = lat.toFixed(6);
+        document.getElementById('lon').value = lon.toFixed(6);
+        showMarker(lat, lon);
+        let start = document.getElementById('start').value;
+        let end = document.getElementById('end').value;
+        await getPixelData(lat, lon, start, end);
+      }
+    });
+
+    map.on('draw:created', async function(e) {
+      if(currentMode === 'area') {
+        var layer = e.layer;
+        var bounds = layer.getBounds();
+        let sw_lat = bounds.getSouthWest().lat;
+        let sw_lon = bounds.getSouthWest().lng;
+        let ne_lat = bounds.getNorthEast().lat;
+        let ne_lon = bounds.getNorthEast().lng;
+        
+        document.getElementById('sw_lat').value = sw_lat.toFixed(6);
+        document.getElementById('sw_lon').value = sw_lon.toFixed(6);
+        document.getElementById('ne_lat').value = ne_lat.toFixed(6);
+        document.getElementById('ne_lon').value = ne_lon.toFixed(6);
+        
+        let area = {sw_lat, sw_lon, ne_lat, ne_lon};
+        let start = document.getElementById('start').value;
+        let end = document.getElementById('end').value;
+        await getAreaData(area, start, end);
+      }
     });
   </script>
 
