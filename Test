@@ -1,99 +1,54 @@
-# -----------------------------
-# Endpoint: ดึงค่า Pixel Reflectance + predict models
-# -----------------------------
-@app.route('/get_pixel', methods=['POST'])
-def get_pixel():
-    lat = float(request.json['lat'])
-    lon = float(request.json['lon'])
-    start = request.json['start']
-    end = request.json['end']
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import MinMaxScaler
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense, Dropout
+from tensorflow.keras.optimizers import Adam
+from sklearn.metrics import mean_squared_error, r2_score
+import numpy as np
 
-    point = ee.Geometry.Point([lon, lat])
+# 1. โหลดข้อมูล
+data = pd.read_excel("bands_sentinel_train.xlsx")
 
-    collection = (
-        ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
-        .filterDate(start, end)
-        .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
-        .map(mask_s2_clouds_reflectance)
-    )
+# สมมุติชื่อคอลัมน์ตามที่คุณอธิบาย
+X = data[["Band1", "Band2", "Band3", "Band4"]].values  # Sentinel-2
+y = data[["B1", "B2", "B3", "B4"]].values              # THEOS-1
 
-    image = collection.mean()
+# 2. แบ่งข้อมูล
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
-    bands = image.reduceRegion(
-        reducer=ee.Reducer.first(),
-        geometry=point,
-        scale=10
-    )
+# 3. สเกลค่า
+scaler_X = MinMaxScaler()
+scaler_y = MinMaxScaler()
 
-    pixel_data = bands.getInfo()
+X_train_scaled = scaler_X.fit_transform(X_train)
+X_test_scaled = scaler_X.transform(X_test)
 
-    # -----------------------------
-    # Step 1: ดึงค่า Blue, Green, Red, NIR
-    # -----------------------------
-    try:
-        blue = float(pixel_data.get("B2", 0))
-        green = float(pixel_data.get("B3", 0))
-        red = float(pixel_data.get("B4", 0))
-        nir = float(pixel_data.get("B8", 0))
-    except:
-        return jsonify({"error": "invalid pixel values"})
+y_train_scaled = scaler_y.fit_transform(y_train)
+y_test_scaled = scaler_y.transform(y_test)
 
-    # -----------------------------
-    # ✅ ปรับสเกล reflectance ให้เหมือน THEOS-1 (0–100%)
-    # -----------------------------
-    # Physical Gain จาก THEOS-1 (2 Feb 2019)
-    G_BLUE = 1.46853
-    G_GREEN = 1.50071
-    G_RED = 1.71019
-    G_NIR = 1.67119
+# 4. สร้างโมเดล Deep Learning
+model = Sequential([
+    Dense(128, activation='relu', input_shape=(4,)),
+    Dropout(0.2),
+    Dense(64, activation='relu'),
+    Dropout(0.2),
+    Dense(32, activation='relu'),
+    Dense(4, activation='sigmoid')  # 4 output bands
+])
 
-    # แปลง reflectance 0–1 → 0–100 และปรับด้วย gain ของ THEOS
-    blue = blue * G_BLUE * 100
-    green = green * G_GREEN * 100
-    red = red * G_RED * 100
-    nir = nir * G_NIR * 100
+# 5. คอมไพล์โมเดล
+model.compile(optimizer=Adam(learning_rate=0.001), loss='mse')
 
-    # -----------------------------
-    # Step 2: MLP → Field Reflectance
-    # -----------------------------
-    X = np.array([[blue, green, red, nir]])
-    X_scaled = scaler_X.transform(X)
-    y_pred_scaled = mlp_model.predict(X_scaled)
-    field_reflectance = scaler_y.inverse_transform(y_pred_scaled.reshape(1, -1)).ravel()
+# 6. เทรนโมเดล
+history = model.fit(X_train_scaled, y_train_scaled, epochs=200, batch_size=16, validation_split=0.2, verbose=1)
 
-    field_blue, field_green, field_red, field_nir = field_reflectance
+# 7. ประเมินผล
+y_pred_scaled = model.predict(X_test_scaled)
+y_pred = scaler_y.inverse_transform(y_pred_scaled)
 
-    # -----------------------------
-    # Step 3: คำนวณดัชนี 5 ตัว
-    # -----------------------------
-    indices = calculate_indices(field_blue, field_green, field_red, field_nir)
+rmse = np.sqrt(mean_squared_error(y_test, y_pred))
+r2 = r2_score(y_test, y_pred)
 
-    # -----------------------------
-    # Step 4: SVR → Predict AGB
-    # -----------------------------
-    idx_vals = np.array([[indices["NDVI"], indices["TNDVI"], indices["SR"], indices["SAVI"], indices["MSAVI2"]]])
-    idx_scaled = svr_scaler_X.transform(idx_vals)
-    agb_scaled = svr_model.predict(idx_scaled)
-    agb = svr_scaler_y.inverse_transform(agb_scaled.reshape(-1, 1)).ravel()[0]
-
-    # -----------------------------
-    # รวมผลลัพธ์
-    # -----------------------------
-    pixel_data.update({
-        "theos_scaled_reflectance": {
-            "Blue": blue,
-            "Green": green,
-            "Red": red,
-            "NIR": nir
-        },
-        "field_reflectance": {
-            "Blue": field_blue,
-            "Green": field_green,
-            "Red": field_red,
-            "NIR": field_nir
-        },
-        "indices": indices,
-        "AGB": agb
-    })
-
-    return jsonify(pixel_data)
+print(f"RMSE: {rmse:.3f}")
+print(f"R²: {r2:.3f}")
