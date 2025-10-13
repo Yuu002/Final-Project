@@ -3,19 +3,18 @@ import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
-from tensorflow.keras.models import Sequential
+from tensorflow.keras.models import Sequential, model_from_json
 from tensorflow.keras.layers import Dense, Dropout
 from tensorflow.keras.callbacks import EarlyStopping
 import joblib
+import pickle
 
 # --------------------------------------------------
 # 1. โหลดข้อมูล
 # --------------------------------------------------
 data = pd.read_excel("bands_sentinel_train.xlsx")
 
-# Features (Sentinel-2)
 X = data[["Band1", "Band2", "Band3", "Band4"]].values
-# Targets (Theos-1)
 y = data[["Blue (B1)", "Green (B2)", "Red (B3)", "NIR (B4)"]].values
 
 # --------------------------------------------------
@@ -28,7 +27,7 @@ X_scaled = scaler_X.fit_transform(X)
 y_scaled = scaler_y.fit_transform(y)
 
 # --------------------------------------------------
-# 3. แบ่งข้อมูล Train / Validation
+# 3. แบ่ง Train / Validation
 # --------------------------------------------------
 X_train, X_val, y_train, y_val = train_test_split(
     X_scaled, y_scaled, test_size=0.2, random_state=42
@@ -42,7 +41,7 @@ model = Sequential([
     Dropout(0.2),
     Dense(64, activation='relu'),
     Dense(32, activation='relu'),
-    Dense(4, activation='linear')  # output 4 ตัว: B1–B4
+    Dense(4, activation='linear')
 ])
 
 model.compile(optimizer='adam', loss='mse', metrics=['mae'])
@@ -51,10 +50,7 @@ model.compile(optimizer='adam', loss='mse', metrics=['mae'])
 # 5. Early Stopping
 # --------------------------------------------------
 early_stop = EarlyStopping(
-    monitor='val_loss',
-    patience=30,
-    restore_best_weights=True,
-    verbose=1
+    monitor='val_loss', patience=30, restore_best_weights=True, verbose=1
 )
 
 # --------------------------------------------------
@@ -70,9 +66,21 @@ history = model.fit(
 )
 
 # --------------------------------------------------
-# 7. Save model และ scaler
+# 7. Save model และ scaler แบบไม่ใช้ h5
 # --------------------------------------------------
-joblib.dump(model, "deep_reflectance_model.pkl")
+
+# ดึง architecture เป็น JSON string
+model_json = model.to_json()
+# ดึง weight ออกมาเป็น numpy arrays
+model_weights = model.get_weights()
+
+# รวมเป็น dict แล้วใช้ pickle (หรือ joblib) dump
+model_dict = {"architecture": model_json, "weights": model_weights}
+
+with open("deep_reflectance_model.pkl", "wb") as f:
+    pickle.dump(model_dict, f)
+
+# scaler แยก 2 ตัว
 joblib.dump(scaler_X, "scaler_X.save")
 joblib.dump(scaler_y, "scaler_y.save")
 
@@ -81,8 +89,6 @@ print("✅ Saved model as deep_reflectance_model.pkl, scaler_X.save, and scaler_
 # --------------------------------------------------
 # 8. แสดงกราฟผลการเทรน
 # --------------------------------------------------
-
-# กราฟ Loss
 plt.figure()
 plt.plot(history.history['loss'], label='Train Loss')
 plt.plot(history.history['val_loss'], label='Validation Loss')
@@ -93,7 +99,6 @@ plt.legend()
 plt.grid(True)
 plt.show()
 
-# กราฟ MAE
 plt.figure()
 plt.plot(history.history['mae'], label='Train MAE')
 plt.plot(history.history['val_mae'], label='Validation MAE')
