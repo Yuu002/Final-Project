@@ -22,31 +22,16 @@ def get_area():
     # ✅ เฉลี่ยภาพตามช่วงเวลา
     image = collection.mean()
 
-    # ✅ เลือกเฉพาะ band ที่ต้องการ
-    bands = ['B2', 'B3', 'B4', 'B8']
-    image = image.select(bands)
-
-    # ✅ ดึง pixel ทั้งหมดใน polygon (ลดขนาดด้วย sample)
-    samples = image.sample(region=polygon, scale=10, geometries=False, tileScale=4)
-
-    # ✅ แปลงเป็น list ของค่า pixel
-    data_list = samples.aggregate_array('B2').combine(
-        samples.aggregate_array('B3')
-    ).combine(
-        samples.aggregate_array('B4')
-    ).combine(
-        samples.aggregate_array('B8')
-    )
-
-    # เพื่อความเสถียร ใช้วิธี reduceRegion แยก band ทีละตัวแทน
+    # ✅ คำนวณค่าเฉลี่ยของแต่ละ band ใน polygon (เฉลี่ยทุก pixel จริง ๆ)
     def get_band_mean(band):
-        return image.select(band).reduceRegion(
+        result = image.select(band).reduceRegion(
             reducer=ee.Reducer.mean(),
             geometry=polygon,
             scale=10,
             maxPixels=1e9,
             tileScale=4
-        ).getInfo().get(band)
+        ).getInfo()
+        return result.get(band)
 
     blue = get_band_mean("B2")
     green = get_band_mean("B3")
