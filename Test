@@ -14,336 +14,339 @@
       box-sizing: border-box;
     }
 
+```
 body {
-font-family: ‘Inter’, -apple-system, BlinkMacSystemFont, ‘Segoe UI’, sans-serif;
-background: #0f172a;
-color: #e2e8f0;
-overflow: hidden;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: #0f172a;
+  color: #e2e8f0;
+  overflow: hidden;
 }
 
 #map {
-height: 100vh;
-width: calc(100% - 420px);
-float: left;
-position: relative;
+  height: 100vh;
+  width: calc(100% - 420px);
+  float: left;
+  position: relative;
 }
 
 #sidebar {
-width: 420px;
-height: 100vh;
-float: right;
-background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
-overflow-y: auto;
-box-shadow: -4px 0 24px rgba(0, 0, 0, 0.3);
-backdrop-filter: blur(10px);
+  width: 420px;
+  height: 100vh;
+  float: right;
+  background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+  overflow-y: auto;
+  box-shadow: -4px 0 24px rgba(0, 0, 0, 0.3);
+  backdrop-filter: blur(10px);
 }
 
 #sidebar::-webkit-scrollbar {
-width: 8px;
+  width: 8px;
 }
 
 #sidebar::-webkit-scrollbar-track {
-background: rgba(255, 255, 255, 0.05);
+  background: rgba(255, 255, 255, 0.05);
 }
 
 #sidebar::-webkit-scrollbar-thumb {
-background: rgba(96, 165, 250, 0.3);
-border-radius: 4px;
+  background: rgba(96, 165, 250, 0.3);
+  border-radius: 4px;
 }
 
 #sidebar::-webkit-scrollbar-thumb:hover {
-background: rgba(96, 165, 250, 0.5);
+  background: rgba(96, 165, 250, 0.5);
 }
 
 .header {
-padding: 32px 28px;
-background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
-border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 32px 28px;
+  background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 .header h1 {
-font-size: 28px;
-font-weight: 700;
-color: white;
-margin-bottom: 6px;
-letter-spacing: -0.5px;
+  font-size: 28px;
+  font-weight: 700;
+  color: white;
+  margin-bottom: 6px;
+  letter-spacing: -0.5px;
 }
 
 .header p {
-color: rgba(255, 255, 255, 0.8);
-font-size: 14px;
-font-weight: 400;
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 14px;
+  font-weight: 400;
 }
 
 .section {
-padding: 24px 28px;
-border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-animation: fadeInUp 0.5s ease-out;
+  padding: 24px 28px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  animation: fadeInUp 0.5s ease-out;
 }
 
 @keyframes fadeInUp {
-from {
-opacity: 0;
-transform: translateY(10px);
-}
-to {
-opacity: 1;
-transform: translateY(0);
-}
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .section-title {
-font-size: 16px;
-font-weight: 600;
-color: #60a5fa;
-margin-bottom: 18px;
-display: flex;
-align-items: center;
-gap: 8px;
+  font-size: 16px;
+  font-weight: 600;
+  color: #60a5fa;
+  margin-bottom: 18px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .section-title::before {
-content: ‘’;
-width: 4px;
-height: 18px;
-background: linear-gradient(180deg, #60a5fa, #3b82f6);
-border-radius: 2px;
+  content: '';
+  width: 4px;
+  height: 18px;
+  background: linear-gradient(180deg, #60a5fa, #3b82f6);
+  border-radius: 2px;
 }
 
 .mode-selector {
-display: grid;
-grid-template-columns: 1fr 1fr;
-gap: 12px;
-margin-bottom: 20px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 20px;
 }
 
 .mode-button {
-padding: 14px 16px;
-background: rgba(255, 255, 255, 0.05);
-border: 2px solid rgba(255, 255, 255, 0.1);
-border-radius: 10px;
-color: #94a3b8;
-font-size: 13px;
-font-weight: 600;
-font-family: inherit;
-cursor: pointer;
-transition: all 0.3s ease;
-text-align: center;
-text-transform: uppercase;
-letter-spacing: 0.5px;
+  padding: 14px 16px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 2px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  color: #94a3b8;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  text-align: center;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
 }
 
 .mode-button:hover {
-border-color: #60a5fa;
-color: #60a5fa;
+  border-color: #60a5fa;
+  color: #60a5fa;
 }
 
 .mode-button.active {
-background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
-border-color: #3b82f6;
-color: white;
-box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+  background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+  border-color: #3b82f6;
+  color: white;
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
 }
 
 label {
-display: block;
-margin-bottom: 8px;
-font-size: 13px;
-font-weight: 500;
-color: #94a3b8;
-text-transform: uppercase;
-letter-spacing: 0.5px;
+  display: block;
+  margin-bottom: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #94a3b8;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
 }
 
-input[type=“date”],
-input[type=“number”] {
-width: 100%;
-padding: 12px 16px;
-margin-bottom: 16px;
-background: rgba(255, 255, 255, 0.05);
-border: 1px solid rgba(255, 255, 255, 0.1);
-border-radius: 10px;
-color: #e2e8f0;
-font-size: 14px;
-font-family: inherit;
-transition: all 0.3s ease;
+input[type="date"],
+input[type="number"] {
+  width: 100%;
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  color: #e2e8f0;
+  font-size: 14px;
+  font-family: inherit;
+  transition: all 0.3s ease;
 }
 
-input[type=“date”]:focus,
-input[type=“number”]:focus {
-outline: none;
-background: rgba(255, 255, 255, 0.08);
-border-color: #60a5fa;
-box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.1);
+input[type="date"]:focus,
+input[type="number"]:focus {
+  outline: none;
+  background: rgba(255, 255, 255, 0.08);
+  border-color: #60a5fa;
+  box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.1);
 }
 
-input[type=“date”]:hover,
-input[type=“number”]:hover {
-border-color: rgba(96, 165, 250, 0.5);
+input[type="date"]:hover,
+input[type="number"]:hover {
+  border-color: rgba(96, 165, 250, 0.5);
 }
 
 button {
-width: 100%;
-padding: 14px 24px;
-background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
-border: none;
-border-radius: 10px;
-color: white;
-font-size: 15px;
-font-weight: 600;
-font-family: inherit;
-cursor: pointer;
-transition: all 0.3s ease;
-box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
-position: relative;
-overflow: hidden;
+  width: 100%;
+  padding: 14px 24px;
+  background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+  border: none;
+  border-radius: 10px;
+  color: white;
+  font-size: 15px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+  position: relative;
+  overflow: hidden;
 }
 
 button::before {
-content: ‘’;
-position: absolute;
-top: 0;
-left: -100%;
-width: 100%;
-height: 100%;
-background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
-transition: left 0.5s ease;
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+  transition: left 0.5s ease;
 }
 
 button:hover::before {
-left: 100%;
+  left: 100%;
 }
 
 button:hover {
-transform: translateY(-2px);
-box-shadow: 0 6px 20px rgba(59, 130, 246, 0.4);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(59, 130, 246, 0.4);
 }
 
 button:active {
-transform: translateY(0);
+  transform: translateY(0);
 }
 
 .hidden {
-display: none;
+  display: none;
 }
 
 .data-grid {
-display: grid;
-gap: 12px;
+  display: grid;
+  gap: 12px;
 }
 
 .data-card {
-background: rgba(255, 255, 255, 0.03);
-border: 1px solid rgba(255, 255, 255, 0.08);
-border-radius: 10px;
-padding: 14px 16px;
-transition: all 0.3s ease;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  padding: 14px 16px;
+  transition: all 0.3s ease;
 }
 
 .data-card:hover {
-background: rgba(255, 255, 255, 0.05);
-border-color: rgba(96, 165, 250, 0.3);
-transform: translateX(4px);
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(96, 165, 250, 0.3);
+  transform: translateX(4px);
 }
 
 .data-label {
-font-size: 12px;
-color: #94a3b8;
-margin-bottom: 6px;
-font-weight: 500;
-text-transform: uppercase;
-letter-spacing: 0.5px;
+  font-size: 12px;
+  color: #94a3b8;
+  margin-bottom: 6px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
 }
 
 .data-value {
-font-size: 18px;
-color: #e2e8f0;
-font-weight: 600;
-font-variant-numeric: tabular-nums;
+  font-size: 18px;
+  color: #e2e8f0;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
 }
 
 .data-value.highlight {
-color: #60a5fa;
+  color: #60a5fa;
 }
 
 .coord-display {
-background: rgba(59, 130, 246, 0.1);
-border: 1px solid rgba(59, 130, 246, 0.2);
-border-radius: 10px;
-padding: 14px 16px;
-margin-bottom: 20px;
-display: flex;
-justify-content: space-between;
-align-items: center;
+  background: rgba(59, 130, 246, 0.1);
+  border: 1px solid rgba(59, 130, 246, 0.2);
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin-bottom: 20px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
 }
 
 .coord-display .coord-item {
-flex: 1;
+  flex: 1;
 }
 
 .coord-display .coord-label {
-font-size: 11px;
-color: #94a3b8;
-margin-bottom: 4px;
-text-transform: uppercase;
-letter-spacing: 0.5px;
+  font-size: 11px;
+  color: #94a3b8;
+  margin-bottom: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
 }
 
 .coord-display .coord-val {
-font-size: 15px;
-color: #60a5fa;
-font-weight: 600;
-font-variant-numeric: tabular-nums;
+  font-size: 15px;
+  color: #60a5fa;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
 }
 
 .empty-state {
-text-align: center;
-padding: 32px 20px;
-color: #64748b;
-font-size: 14px;
+  text-align: center;
+  padding: 32px 20px;
+  color: #64748b;
+  font-size: 14px;
 }
 
 .badge {
-display: inline-block;
-padding: 4px 10px;
-background: rgba(34, 197, 94, 0.1);
-border: 1px solid rgba(34, 197, 94, 0.2);
-border-radius: 6px;
-color: #4ade80;
-font-size: 11px;
-font-weight: 600;
-text-transform: uppercase;
-letter-spacing: 0.5px;
-margin-left: 8px;
+  display: inline-block;
+  padding: 4px 10px;
+  background: rgba(34, 197, 94, 0.1);
+  border: 1px solid rgba(34, 197, 94, 0.2);
+  border-radius: 6px;
+  color: #4ade80;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-left: 8px;
 }
 
 .leaflet-popup-content-wrapper {
-background: rgba(15, 23, 42, 0.95);
-color: #e2e8f0;
-border-radius: 10px;
-box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  background: rgba(15, 23, 42, 0.95);
+  color: #e2e8f0;
+  border-radius: 10px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
 }
 
 .leaflet-popup-tip {
-background: rgba(15, 23, 42, 0.95);
+  background: rgba(15, 23, 42, 0.95);
 }
 
-input[type=“date”]::-webkit-calendar-picker-indicator {
-filter: invert(0.7);
-cursor: pointer;
+input[type="date"]::-webkit-calendar-picker-indicator {
+  filter: invert(0.7);
+  cursor: pointer;
 }
 
 .area-info {
-background: rgba(59, 130, 246, 0.1);
-border: 1px solid rgba(59, 130, 246, 0.2);
-border-radius: 10px;
-padding: 14px 16px;
-margin-bottom: 20px;
-color: #94a3b8;
-font-size: 13px;
-line-height: 1.5;
+  background: rgba(59, 130, 246, 0.1);
+  border: 1px solid rgba(59, 130, 246, 0.2);
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin-bottom: 20px;
+  color: #94a3b8;
+  font-size: 13px;
+  line-height: 1.5;
 }
-</style>
+```
+
+  </style>
 
 </head>
 <body>
@@ -354,13 +357,14 @@ line-height: 1.5;
       <p>Earth Observation & Analysis Platform</p>
     </div>
 
+```
 <div class="section">
   <div class="section-title">Date Range</div>
   <label>Start Date</label>
   <input type="date" id="start" value="2020-01-01">
 
-<label>End Date</label>
-<input type="date" id="end" value="2020-01-15">
+  <label>End Date</label>
+  <input type="date" id="end" value="2020-01-15">
 
   <div class="section-title" style="margin-top: 24px;">Analysis Mode</div>
   <div class="mode-selector">
@@ -368,7 +372,7 @@ line-height: 1.5;
     <button class="mode-button" id="modeArea" data-mode="area">📐 Analyze Area</button>
   </div>
 
-<button id="loadMap">🔍 Load Satellite Imagery</button>
+  <button id="loadMap">🔍 Load Satellite Imagery</button>
 
 </div>
 
@@ -377,10 +381,10 @@ line-height: 1.5;
   <label>Latitude</label>
   <input type="number" id="lat" step="0.0001" placeholder="e.g., 19.2000">
 
-<label>Longitude</label>
-<input type="number" id="lon" step="0.0001" placeholder="e.g., 100.1000">
+  <label>Longitude</label>
+  <input type="number" id="lon" step="0.0001" placeholder="e.g., 100.1000">
 
-<button id="getPixel">📍 Analyze Point</button>
+  <button id="getPixel">📍 Analyze Point</button>
 
 </div>
 
@@ -482,6 +486,7 @@ line-height: 1.5;
     <div class="data-value highlight" id="agb">-</div>
   </div>
 </div>
+```
 
   </div>
 
@@ -527,6 +532,7 @@ line-height: 1.5;
       document.getElementById('pointMode').classList.remove('hidden');
       document.getElementById('areaMode').classList.add('hidden');
       map.removeControl(drawControl);
+      clearResults();
     };
 
     document.getElementById('modeArea').onclick = function() {
@@ -537,6 +543,8 @@ line-height: 1.5;
       document.getElementById('areaMode').classList.remove('hidden');
       map.addControl(drawControl);
       clearResults();
+      if(marker) map.removeLayer(marker);
+      drawnItems.clearLayers();
     };
 
     map.on('draw:created', function(e) {
@@ -638,45 +646,6 @@ line-height: 1.5;
       document.getElementById('agb').innerText = formatVal(pixel.AGB);
     }
 
-    async function getAreaData(coordinates, start, end) {
-      let resp = await fetch('/get_area', {
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({coordinates, start, end})
-      });
-      let data = await resp.json();
-
-      function formatVal(val) {
-        if (val == null || val == undefined) return '-';
-        let num = Number(val);
-        return num.toFixed(3);
-      }
-
-      document.getElementById('coordLat').innerText = 'Area';
-      document.getElementById('coordLon').innerText = 'Selected';
-      document.getElementById('red').innerText   = formatVal(data['B4']);
-      document.getElementById('green').innerText = formatVal(data['B3']);
-      document.getElementById('blue').innerText  = formatVal(data['B2']);
-      document.getElementById('nir').innerText   = formatVal(data['B8']);
-
-      if(data.field_reflectance){
-        document.getElementById('fblue').innerText  = formatVal(data.field_reflectance.Blue);
-        document.getElementById('fgreen').innerText = formatVal(data.field_reflectance.Green);
-        document.getElementById('fred').innerText   = formatVal(data.field_reflectance.Red);
-        document.getElementById('fnir').innerText   = formatVal(data.field_reflectance.NIR);
-      }
-
-      if(data.indices){
-        document.getElementById('ndvi').innerText  = formatVal(data.indices.NDVI);
-        document.getElementById('tndvi').innerText = formatVal(data.indices.TNDVI);
-        document.getElementById('sr').innerText    = formatVal(data.indices.SR);
-        document.getElementById('savi').innerText  = formatVal(data.indices.SAVI);
-        document.getElementById('msavi2').innerText= formatVal(data.indices.MSAVI2);
-      }
-
-      document.getElementById('agb').innerText = formatVal(data.AGB);
-    }
-
     document.getElementById('getPixel').onclick = async function() {
       let lat = parseFloat(document.getElementById('lat').value);
       let lon = parseFloat(document.getElementById('lon').value);
@@ -699,9 +668,69 @@ line-height: 1.5;
 
       let polygon = drawnItems.getLayers()[0];
       let latlngs = polygon.getLatLngs()[0];
-      let coordinates = latlngs.map(latlng => [latlng.lat, latlng.lng]);
       
-      await getAreaData(coordinates, start, end);
+      // FIX: Convert to GeoJSON format [lon, lat] and wrap in array
+      let coordinates = [latlngs.map(latlng => [latlng.lng, latlng.lat])];
+      
+      // FIX: Create GeoJSON geometry object
+      let geometry = {
+        type: "Polygon",
+        coordinates: coordinates
+      };
+      
+      try {
+        let resp = await fetch('/get_area', {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({
+            start: start,
+            end: end,
+            geometry: geometry
+          })
+        });
+        
+        if (!resp.ok) {
+          let error = await resp.json();
+          alert("Error: " + (error.error || "Unknown error"));
+          return;
+        }
+        
+        let data = await resp.json();
+        
+        function formatVal(val) {
+          if (val == null || val == undefined) return '-';
+          let num = Number(val);
+          return num.toFixed(3);
+        }
+
+        document.getElementById('coordLat').innerText = 'Area';
+        document.getElementById('coordLon').innerText = 'Selected';
+        document.getElementById('red').innerText   = formatVal(data.mean_reflectance?.B4 || data.B4);
+        document.getElementById('green').innerText = formatVal(data.mean_reflectance?.B3 || data.B3);
+        document.getElementById('blue').innerText  = formatVal(data.mean_reflectance?.B2 || data.B2);
+        document.getElementById('nir').innerText   = formatVal(data.mean_reflectance?.B8 || data.B8);
+
+        if(data.field_reflectance){
+          document.getElementById('fblue').innerText  = formatVal(data.field_reflectance.Blue);
+          document.getElementById('fgreen').innerText = formatVal(data.field_reflectance.Green);
+          document.getElementById('fred').innerText   = formatVal(data.field_reflectance.Red);
+          document.getElementById('fnir').innerText   = formatVal(data.field_reflectance.NIR);
+        }
+
+        if(data.indices){
+          document.getElementById('ndvi').innerText  = formatVal(data.indices.NDVI);
+          document.getElementById('tndvi').innerText = formatVal(data.indices.TNDVI);
+          document.getElementById('sr').innerText    = formatVal(data.indices.SR);
+          document.getElementById('savi').innerText  = formatVal(data.indices.SAVI);
+          document.getElementById('msavi2').innerText= formatVal(data.indices.MSAVI2);
+        }
+
+        document.getElementById('agb').innerText = formatVal(data.AGB);
+        
+      } catch (err) {
+        console.error("Error analyzing area:", err);
+        alert("Failed to analyze area. Check console for details.");
+      }
     };
 
     map.on('click', async function(e){
