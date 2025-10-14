@@ -201,3 +201,166 @@
   </script>
 </body>
 </html>
+----\
+from flask import Flask, render_template, request, jsonify
+import ee
+import joblib
+import numpy as np
+from indices import calculate_indices  # ใช้สูตรที่คุณเขียนไว้ใน indices.py
+
+# -----------------------------
+# Init Earth Engine
+# -----------------------------
+ee.Initialize(project='map-web-473508')
+
+app = Flask(__name__)
+
+# -----------------------------
+# โหลดโมเดลและ Scaler
+# -----------------------------
+mlp_model = joblib.load("models/mlp_model.pkl")
+scaler_X = joblib.load("models/scaler_X.save")
+scaler_y = joblib.load("models/scaler_y.save")
+
+ref_model = joblib.load("models/ref_model.pkl")
+ref_scaler_X = joblib.load("models/ref_scaler_X.save")
+ref_scaler_y = joblib.load("models/ref_scaler_y.save")
+
+svr_model = joblib.load("models/svr_agb_model.pkl")
+svr_scaler_X = joblib.load("models/svr_scaler_X.save")
+svr_scaler_y = joblib.load("models/svr_scaler_y.save")
+
+# -----------------------------
+# Cloud Mask Functions
+# -----------------------------
+def mask_s2_clouds_reflectance(image):
+    qa = image.select('QA60')
+    cloud_bit_mask = 1 << 10
+    cirrus_bit_mask = 1 << 11
+    mask = (
+        qa.bitwiseAnd(cloud_bit_mask).eq(0)
+        .And(qa.bitwiseAnd(cirrus_bit_mask).eq(0))
+    )
+    return image.updateMask(mask).divide(10000)
+
+def mask_s2_clouds_dn(image):
+    qa = image.select('QA60')
+    cloud_bit_mask = 1 << 10
+    cirrus_bit_mask = 1 << 11
+    mask = qa.bitwiseAnd(cloud_bit_mask).eq(0).And(qa.bitwiseAnd(cirrus_bit_mask).eq(0))
+    dn_image = image.divide(10000).multiply(100).toUint16()
+    return dn_image.updateMask(mask)
+
+# -----------------------------
+@app.route('/')
+def index():
+    return render_template('index.html')
+
+# -----------------------------
+# Endpoint: โหลด Sentinel-2 Map
+# -----------------------------
+@app.route('/get_map', methods=['POST'])
+def get_map():
+    start = request.json['start']
+    end = request.json['end']
+
+    collection_ref = (
+        ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
+        .filterDate(start, end)
+        .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
+        .map(mask_s2_clouds_reflectance)
+    )
+
+    image_ref = collection_ref.mean()
+    vis_sentinel = {'bands': ['B4', 'B3', 'B2'], 'min': 0.0, 'max': 0.3, 'gamma': 1.0}
+    map_id_sentinel = ee.Image(image_ref).getMapId(vis_sentinel)
+
+    return jsonify({
+        'sentinel_url': map_id_sentinel['tile_fetcher'].url_format
+    })
+
+# -----------------------------
+# Endpoint: คำนวณค่าจากพื้นที่ที่วาด
+# -----------------------------
+@app.route('/get_area', methods=['POST'])
+def get_area():
+    try:
+        start = request.json['start']
+        end = request.json['end']
+        area = request.json['area']
+
+        sw_lat = float(area['sw_lat'])
+        sw_lon = float(area['sw_lon'])
+        ne_lat = float(area['ne_lat'])
+        ne_lon = float(area['ne_lon'])
+
+        # ✅ Debug geometry
+        print(f"Geometry Input: SW=({sw_lat},{sw_lon}), NE=({ne_lat},{ne_lon})")
+
+        geom = ee.Geometry.Rectangle([sw_lon, sw_lat, ne_lon, ne_lat])
+
+        collection = (
+            ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
+            .filterDate(start, end)
+            .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
+            .map(mask_s2_clouds_reflectance)
+        )
+
+        image = collection.mean()
+
+        # ✅ ปรับ scale และ maxPixels
+        bands = image.reduceRegion(
+            reducer=ee.Reducer.mean(),
+            geometry=geom,
+            scale=30,         # ปรับจาก 10 → 30 เพื่อให้ไม่ timeout
+            maxPixels=1e9
+        )
+
+        pixel_data = bands.getInfo()
+        print(f"Raw Pixel Data: {pixel_data}")
+
+        if not pixel_data or len(pixel_data) == 0:
+            return jsonify({"error": "no valid pixels (possibly all masked by clouds)"}), 400
+
+        # Step 1: Extract B2-B8
+        blue = float(pixel_data.get("B2", 0))
+        green = float(pixel_data.get("B3", 0))
+        red = float(pixel_data.get("B4", 0))
+        nir = float(pixel_data.get("B8", 0))
+
+        # Step 2: Predict field reflectance
+        X = np.array([[blue, green, red, nir]])
+        X_scaled = scaler_X.transform(X)
+        y_pred_scaled = mlp_model.predict(X_scaled)
+        field_reflectance = scaler_y.inverse_transform(y_pred_scaled)
+
+        ref_X_scaled = ref_scaler_X.transform(field_reflectance)
+        ref_y_pred_scaled = ref_model.predict(ref_X_scaled)
+        ref_field_reflectance = ref_scaler_y.inverse_transform(ref_y_pred_scaled)
+        ref_blue, ref_green, ref_red, ref_nir = ref_field_reflectance.ravel()
+
+        # Step 3: Indices
+        indices = calculate_indices(ref_blue, ref_green, ref_red, ref_nir)
+
+        # Step 4: Predict AGB
+        idx_vals = np.array([[indices["NDVI"], indices["TNDVI"], indices["SR"], indices["SAVI"], indices["MSAVI2"]]])
+        idx_scaled = svr_scaler_X.transform(idx_vals)
+        agb_scaled = svr_model.predict(idx_scaled)
+        agb = svr_scaler_y.inverse_transform(agb_scaled.reshape(-1, 1)).ravel()[0]
+
+        result = {
+            "reflectance": {"Blue": ref_blue, "Green": ref_green, "Red": ref_red, "NIR": ref_nir},
+            "indices": indices,
+            "AGB": agb
+        }
+
+        print(f"✅ Area Calculation Success: {result}")
+        return jsonify(result)
+
+    except Exception as e:
+        print(f"❌ ERROR in get_area(): {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+# -----------------------------
+if __name__ == '__main__':
+    app.run(debug=True, threaded=True)
