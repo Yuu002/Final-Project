@@ -5,13 +5,13 @@ def get_area():
     start = data['start']
     end = data['end']
 
-    # รองรับพิกัดจาก leaflet
+    # ✅ รองรับพิกัดจาก leaflet
     if isinstance(coords[0][0], list):
         polygon = ee.Geometry.Polygon(coords)
     else:
         polygon = ee.Geometry.Polygon([coords])
 
-    # โหลดภาพ Sentinel-2 แล้วกรองตามวันที่และเมฆ
+    # ✅ โหลดภาพ Sentinel-2 แล้วกรองตามวันที่และเมฆ
     collection = (
         ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
         .filterDate(start, end)
@@ -19,26 +19,36 @@ def get_area():
         .map(mask_s2_clouds_reflectance)
     )
 
-    # เฉลี่ยภาพตลอดช่วงเวลา
+    # ✅ เฉลี่ยภาพตลอดช่วงเวลา
     image = collection.mean()
 
-    # ✅ คำนวณค่าเฉลี่ยของแต่ละ band ภายใน polygon โดยตรง
-    mean_dict = image.reduceRegion(
-        reducer=ee.Reducer.mean(),
+    # ✅ คำนวณค่าเฉลี่ยเชิงพื้นที่ของแต่ละ band ใน polygon
+    mean_sum_count = image.reduceRegion(
+        reducer=ee.Reducer.sum().combine(
+            reducer2=ee.Reducer.count(),
+            sharedInputs=True
+        ),
         geometry=polygon,
         scale=10,
         maxPixels=1e9,
         tileScale=4
     ).getInfo()
 
-    # ถ้าไม่มีค่า valid
-    if not mean_dict or mean_dict.get('B2') is None:
-        return jsonify({'error': 'No valid pixel values found in this area.'})
+    def calc_mean(band):
+        s = mean_sum_count.get(f"{band}_sum", 0)
+        c = mean_sum_count.get(f"{band}_count", 0)
+        if not c or s is None:
+            return None
+        return float(s) / float(c)
 
-    blue = float(mean_dict.get("B2", 0))
-    green = float(mean_dict.get("B3", 0))
-    red = float(mean_dict.get("B4", 0))
-    nir = float(mean_dict.get("B8", 0))
+    blue = calc_mean("B2")
+    green = calc_mean("B3")
+    red = calc_mean("B4")
+    nir = calc_mean("B8")
+
+    # ✅ ตรวจว่ามีค่าครบหรือไม่
+    if None in (blue, green, red, nir):
+        return jsonify({'error': 'No valid pixel values found in this area.'})
 
     # ---- Pipeline model ตามปกติ ----
     X = np.array([[blue, green, red, nir]])
