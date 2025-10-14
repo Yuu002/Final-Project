@@ -1,2 +1,19 @@
 EE_ACCOUNT=admin-164@map-web-473508.iam.gserviceaccount.com
 EE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDPey6ZcInJVYA5\ng3ZjrzXUEhgCdBWf/…\n-----END PRIVATE KEY-----\n"
+
+import ee
+import os
+import json
+
+# โหลด Service Account credentials จาก environment
+service_account = os.environ.get("EE_ACCOUNT")
+private_key = os.environ.get("EE_PRIVATE_KEY")
+
+credentials_dict = {
+    "type": "service_account",
+    "client_email": service_account,
+    "private_key": private_key,
+}
+
+credentials = ee.ServiceAccountCredentials(service_account, private_key)
+ee.Initialize(credentials)
