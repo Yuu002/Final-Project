@@ -1,256 +1,265 @@
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <title>Sentinel-2 Viewer</title>
-  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
-  <link rel="stylesheet" href="https://unpkg.com/leaflet-draw/dist/leaflet.draw.css"/>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+# app.py
+from flask import Flask, render_template, request, jsonify
+import ee
+import joblib
+import numpy as np
+from indices import calculate_indices  # ใช้สูตรที่คุณเขียนไว้ใน indices.py
 
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body {
-      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-      background: #0f172a; color: #e2e8f0; overflow: hidden;
-    }
-    #map { height: 100vh; width: calc(100% - 420px); float: left; position: relative; }
-    #sidebar {
-      width: 420px; height: 100vh; float: right;
-      background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
-      overflow-y: auto; box-shadow: -4px 0 24px rgba(0, 0, 0, 0.3);
-      backdrop-filter: blur(10px);
-    }
-    #sidebar::-webkit-scrollbar { width: 8px; }
-    #sidebar::-webkit-scrollbar-thumb { background: rgba(96,165,250,0.3); border-radius: 4px; }
-    .header { padding: 32px 28px; background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); }
-    .header h1 { font-size: 28px; font-weight: 700; color: white; margin-bottom: 6px; }
-    .section { padding: 24px 28px; border-bottom: 1px solid rgba(255,255,255,0.06); }
-    .section-title { font-size: 16px; font-weight: 600; color: #60a5fa; margin-bottom: 18px; }
-    input[type="date"], input[type="number"] {
-      width: 100%; padding: 12px 16px; margin-bottom: 16px;
-      background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);
-      border-radius: 10px; color: #e2e8f0; font-size: 14px;
-    }
-    button {
-      width: 100%; padding: 14px 24px;
-      background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
-      border: none; border-radius: 10px; color: white;
-      font-size: 15px; font-weight: 600; cursor: pointer;
-      transition: all 0.3s ease; box-shadow: 0 4px 12px rgba(59,130,246,0.3);
-    }
-    button:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(59,130,246,0.4); }
-    .mode-selector { display: flex; gap: 12px; margin-bottom: 16px; }
-    .mode-btn {
-      flex: 1; padding: 12px 16px;
-      background: rgba(255,255,255,0.05); border: 2px solid rgba(255,255,255,0.1);
-      border-radius: 8px; color: #94a3b8; font-size: 13px; font-weight: 600;
-      cursor: pointer; transition: all 0.3s ease; text-transform: uppercase;
-    }
-    .mode-btn.active {
-      background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
-      border-color: #3b82f6; color: white; box-shadow: 0 4px 12px rgba(59,130,246,0.3);
-    }
-    .mode-content { display: none; }
-    .mode-content.active { display: block; }
-    .coord-display { background: rgba(59,130,246,0.1); border: 1px solid rgba(59,130,246,0.2); border-radius: 10px; padding: 14px 16px; display: flex; justify-content: space-between; }
-    .coord-label { font-size: 11px; color: #94a3b8; margin-bottom: 4px; }
-    .coord-val { font-size: 15px; color: #60a5fa; font-weight: 600; }
-    .data-grid { display: grid; gap: 12px; }
-    .data-card { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; padding: 14px 16px; }
-    .data-label { font-size: 12px; color: #94a3b8; margin-bottom: 6px; }
-    .data-value { font-size: 18px; color: #e2e8f0; font-weight: 600; }
-    .data-value.highlight { color: #60a5fa; }
-    .info-text { font-size: 12px; color: #64748b; margin-top: 12px; padding: 12px; background: rgba(59,130,246,0.05); border-left: 3px solid #60a5fa; border-radius: 4px; }
-  </style>
-</head>
+# -----------------------------
+# Init Earth Engine
+# -----------------------------
+ee.Initialize(project='map-web-473508')
 
-<body>
-  <div id="map"></div>
-  <div id="sidebar">
-    <div class="header">
-      <h1>🛰️ Sentinel-2 Viewer</h1>
-      <p>Earth Observation & Analysis Platform</p>
-    </div>
+app = Flask(__name__)
 
-    <div class="section">
-      <div class="section-title">Date Range</div>
-      <label>Start Date</label>
-      <input type="date" id="start" value="2020-01-01">
-      <label>End Date</label>
-      <input type="date" id="end" value="2020-01-15">
-      <button id="loadMap">🔍 Load Satellite Imagery</button>
-    </div>
+# -----------------------------
+# โหลดโมเดลและ Scaler
+# -----------------------------
+mlp_model = joblib.load("models\\mlp_model.pkl")
+scaler_X = joblib.load("models\\scaler_X.save")
+scaler_y = joblib.load("models\\scaler_y.save")
 
-    <div class="section">
-      <div class="section-title">Analysis Mode</div>
-      <div class="mode-selector">
-        <button class="mode-btn active" data-mode="point">📍 Point</button>
-        <button class="mode-btn" data-mode="area">🗺️ Area</button>
-      </div>
+ref_model = joblib.load("models\\ref_model.pkl")
+ref_scaler_X = joblib.load("models\\ref_scaler_X.save")
+ref_scaler_y = joblib.load("models\\ref_scaler_y.save")
 
-      <!-- Point Mode -->
-      <div class="mode-content active" id="point-mode">
-        <label>Latitude</label>
-        <input type="number" id="lat" step="0.0001" placeholder="e.g., 19.2000">
-        <label>Longitude</label>
-        <input type="number" id="lon" step="0.0001" placeholder="e.g., 100.1000">
-        <button id="getPixel">📍 Analyze Point</button>
-        <div class="info-text">💡 Click on the map or enter coordinates to analyze a single point.</div>
-      </div>
+svr_model = joblib.load("models\\svr_agb_model.pkl")
+svr_scaler_X = joblib.load("models\\svr_scaler_X.save")
+svr_scaler_y = joblib.load("models\\svr_scaler_y.save")
 
-      <!-- Area Mode -->
-      <div class="mode-content" id="area-mode">
-        <button id="drawArea">🗺️ Draw Area on Map</button>
-        <div class="info-text">💡 Click “Draw Area”, then drag on the map to select a region for analysis. You can edit or delete it later.</div>
-      </div>
-    </div>
+# -----------------------------
+# Cloud Mask Function (Sentinel-2 SR → Surface Reflectance 0–1)
+# -----------------------------
+def mask_s2_clouds_reflectance(image):
+    """Masks clouds in Sentinel-2 SR and scales to reflectance (0–1)."""
+    qa = image.select('QA60')
+    cloud_bit_mask = 1 << 10
+    cirrus_bit_mask = 1 << 11
+    mask = (
+        qa.bitwiseAnd(cloud_bit_mask)
+        .eq(0)
+        .And(qa.bitwiseAnd(cirrus_bit_mask).eq(0))
+    )
+    return image.updateMask(mask).divide(10000)  # scale 0–1
 
-    <div class="section">
-      <div class="section-title">Selected Location</div>
-      <div class="coord-display">
-        <div>
-          <div class="coord-label">Latitude</div>
-          <div class="coord-val" id="coordLat">-</div>
-        </div>
-        <div>
-          <div class="coord-label">Longitude</div>
-          <div class="coord-val" id="coordLon">-</div>
-        </div>
-      </div>
-    </div>
+# -----------------------------
+# Cloud Mask + DN scale (Sentinel-2 → THEOS-style DN 0–100)
+# -----------------------------
+def mask_s2_clouds_dn(image):
+    qa = image.select('QA60')
+    cloud_bit_mask = 1 << 10
+    cirrus_bit_mask = 1 << 11
+    mask = qa.bitwiseAnd(cloud_bit_mask).eq(0).And(qa.bitwiseAnd(cirrus_bit_mask).eq(0))
+    dn_image = image.divide(10000).multiply(100).toUint16()
+    return dn_image.updateMask(mask)
 
-    <div class="section">
-      <div class="section-title">Sentinel-2 Reflectance</div>
-      <div class="data-grid">
-        <div class="data-card"><div class="data-label">🔴 Red (B4)</div><div class="data-value" id="red">-</div></div>
-        <div class="data-card"><div class="data-label">🟢 Green (B3)</div><div class="data-value" id="green">-</div></div>
-        <div class="data-card"><div class="data-label">🔵 Blue (B2)</div><div class="data-value" id="blue">-</div></div>
-        <div class="data-card"><div class="data-label">⚫ NIR (B8)</div><div class="data-value" id="nir">-</div></div>
-      </div>
-    </div>
+# -----------------------------
+@app.route('/')
+def index():
+    return render_template('index.html')
 
-    <div class="section">
-      <div class="section-title">Vegetation Indices</div>
-      <div class="data-grid">
-        <div class="data-card"><div class="data-label">NDVI</div><div class="data-value highlight" id="ndvi">-</div></div>
-        <div class="data-card"><div class="data-label">TNDVI</div><div class="data-value highlight" id="tndvi">-</div></div>
-        <div class="data-card"><div class="data-label">SR</div><div class="data-value highlight" id="sr">-</div></div>
-        <div class="data-card"><div class="data-label">SAVI</div><div class="data-value highlight" id="savi">-</div></div>
-        <div class="data-card"><div class="data-label">MSAVI2</div><div class="data-value highlight" id="msavi2">-</div></div>
-      </div>
-    </div>
-  </div>
+# -----------------------------
+# Endpoint: ดึง Sentinel-2 และ THEOS-style map tiles
+# -----------------------------
+@app.route('/get_map', methods=['POST'])
+def get_map():
+    start = request.json['start']
+    end = request.json['end']
 
-  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
-  <script src="https://unpkg.com/leaflet-draw/dist/leaflet.draw.js"></script>
+    # Sentinel-2 Surface Reflectance (0–1)
+    collection_ref = (
+        ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
+        .filterDate(start, end)
+        .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
+        .map(mask_s2_clouds_reflectance)
+    )
+    image_ref = collection_ref.mean()
 
-  <script>
-    var map = L.map('map').setView([19.2, 100.1], 10);
-    var osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
-    var marker, rectangle;
-    var currentMode = 'point';
+    vis_sentinel = {'bands': ['B4', 'B3', 'B2'], 'min': 0.0, 'max': 0.3, 'gamma': 1.0}
+    map_id_sentinel = ee.Image(image_ref).getMapId(vis_sentinel)
 
-    // Draw controls
-    var drawnItems = new L.FeatureGroup().addTo(map);
-    var drawControl = new L.Control.Draw({
-      edit: { featureGroup: drawnItems, remove: true },
-      draw: {
-        marker: false, circle: false, polyline: false, polygon: false,
-        rectangle: { shapeOptions: { color: '#60a5fa', weight: 2, fillOpacity: 0.1 } }
-      }
-    });
-    map.addControl(drawControl);
+    # THEOS-style DN
+    collection_dn = (
+        ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
+        .filterDate(start, end)
+        .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
+        .map(mask_s2_clouds_dn)
+    )
+    image_dn = collection_dn.mean()
 
-    // Switch mode
-    document.querySelectorAll('.mode-btn').forEach(btn => {
-      btn.addEventListener('click', function() {
-        document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
-        document.querySelectorAll('.mode-content').forEach(c => c.classList.remove('active'));
-        this.classList.add('active');
-        currentMode = this.getAttribute('data-mode');
-        document.getElementById(currentMode + '-mode').classList.add('active');
-        if(marker) map.removeLayer(marker);
-        if(rectangle) { drawnItems.clearLayers(); rectangle = null; }
-      });
-    });
+    vis_theos = {'bands': ['B4', 'B3', 'B2'], 'min': 0, 'max': 100, 'gamma': 1.0}
+    map_id_theos = ee.Image(image_dn).getMapId(vis_theos)
 
-    // Draw area button
-    document.getElementById('drawArea').onclick = function() {
-      new L.Draw.Rectangle(map, drawControl.options.draw.rectangle).enable();
-    };
+    return jsonify({
+        'sentinel_url': map_id_sentinel['tile_fetcher'].url_format,
+        'theos_url': map_id_theos['tile_fetcher'].url_format
+    })
 
-    // Draw create / edit events
-    map.on(L.Draw.Event.CREATED, async function(e) {
-      if(currentMode !== 'area') return;
-      drawnItems.clearLayers();
-      rectangle = e.layer;
-      drawnItems.addLayer(rectangle);
-      let b = rectangle.getBounds();
-      let area = {
-        sw_lat: b.getSouthWest().lat,
-        sw_lon: b.getSouthWest().lng,
-        ne_lat: b.getNorthEast().lat,
-        ne_lon: b.getNorthEast().lng
-      };
-      await getAreaData(area);
-    });
+# -----------------------------
+# Endpoint: ดึงค่า Pixel Reflectance + predict models
+# -----------------------------
+@app.route('/get_pixel', methods=['POST'])
+def get_pixel():
+    lat = float(request.json['lat'])
+    lon = float(request.json['lon'])
+    start = request.json['start']
+    end = request.json['end']
 
-    map.on(L.Draw.Event.EDITED, async function(e) {
-      if(currentMode !== 'area') return;
-      e.layers.eachLayer(async layer => {
-        let b = layer.getBounds();
-        let area = {
-          sw_lat: b.getSouthWest().lat,
-          sw_lon: b.getSouthWest().lng,
-          ne_lat: b.getNorthEast().lat,
-          ne_lon: b.getNorthEast().lng
-        };
-        await getAreaData(area);
-      });
-    });
+    point = ee.Geometry.Point([lon, lat])
 
-    // Point click
-    map.on('click', async function(e) {
-      if(currentMode === 'point') {
-        let lat = e.latlng.lat, lon = e.latlng.lng;
-        document.getElementById('lat').value = lat.toFixed(6);
-        document.getElementById('lon').value = lon.toFixed(6);
-        if(marker) map.removeLayer(marker);
-        marker = L.marker([lat, lon]).addTo(map).bindPopup(`Lat: ${lat.toFixed(6)}, Lon: ${lon.toFixed(6)}`).openPopup();
-        await getPixelData(lat, lon);
-      }
-    });
+    collection = (
+        ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
+        .filterDate(start, end)
+        .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
+        .map(mask_s2_clouds_reflectance)
+    )
 
-    // Fake API responses (for demo)
-    async function getPixelData(lat, lon) {
-      document.getElementById('coordLat').innerText = lat.toFixed(6);
-      document.getElementById('coordLon').innerText = lon.toFixed(6);
-      document.getElementById('red').innerText = (Math.random()).toFixed(3);
-      document.getElementById('green').innerText = (Math.random()).toFixed(3);
-      document.getElementById('blue').innerText = (Math.random()).toFixed(3);
-      document.getElementById('nir').innerText = (Math.random()).toFixed(3);
-      document.getElementById('ndvi').innerText = (Math.random()).toFixed(3);
-      document.getElementById('tndvi').innerText = (Math.random()).toFixed(3);
-      document.getElementById('sr').innerText = (Math.random()).toFixed(3);
-      document.getElementById('savi').innerText = (Math.random()).toFixed(3);
-      document.getElementById('msavi2').innerText = (Math.random()).toFixed(3);
-    }
+    image = collection.mean()
 
-    async function getAreaData(area) {
-      let lat = (area.sw_lat + area.ne_lat) / 2;
-      let lon = (area.sw_lon + area.ne_lon) / 2;
-      document.getElementById('coordLat').innerText = lat.toFixed(6);
-      document.getElementById('coordLon').innerText = lon.toFixed(6);
-      document.getElementById('red').innerText = (Math.random()).toFixed(3);
-      document.getElementById('green').innerText = (Math.random()).toFixed(3);
-      document.getElementById('blue').innerText = (Math.random()).toFixed(3);
-      document.getElementById('nir').innerText = (Math.random()).toFixed(3);
-      document.getElementById('ndvi').innerText = (Math.random()).toFixed(3);
-      document.getElementById('tndvi').innerText = (Math.random()).toFixed(3);
-      document.getElementById('sr').innerText = (Math.random()).toFixed(3);
-      document.getElementById('savi').innerText = (Math.random()).toFixed(3);
-      document.getElementById('msavi2').innerText = (Math.random()).toFixed(3);
-    }
-  </script>
-</body>
-</html>
+    bands = image.reduceRegion(
+        reducer=ee.Reducer.first(),
+        geometry=point,
+        scale=10
+    )
+
+    pixel_data = bands.getInfo()
+
+    # -----------------------------
+    # Step 1: ดึงค่า Blue, Green, Red, NIR
+    # -----------------------------
+    try:
+        blue = float(pixel_data.get("B2", 0))
+        green = float(pixel_data.get("B3", 0))
+        red = float(pixel_data.get("B4", 0))
+        nir = float(pixel_data.get("B8", 0))
+    except:
+        return jsonify({"error": "invalid pixel values"})
+
+    # -----------------------------
+    # Step 2: MLP → Field Reflectance
+    # -----------------------------
+    X = np.array([[blue, green, red, nir]])
+    X_scaled = scaler_X.transform(X)
+    y_pred_scaled = mlp_model.predict(X_scaled)
+    field_reflectance = scaler_y.inverse_transform(y_pred_scaled)
+
+    # -----------------------------
+    # Step 2.5: REF → Cor Field Reflectance
+    # -----------------------------
+    ref_X_scaled = ref_scaler_X.transform(field_reflectance)
+    ref_y_pred_scaled = ref_model.predict(ref_X_scaled)
+    ref_field_reflectance = ref_scaler_y.inverse_transform(ref_y_pred_scaled)
+
+    ref_blue, ref_green, ref_red, ref_nir = ref_field_reflectance.ravel()
+
+    # -----------------------------
+    # Step 3: คำนวณดัชนี 5 ตัว
+    # -----------------------------
+    indices = calculate_indices(ref_blue, ref_green, ref_red, ref_nir)
+
+    # -----------------------------
+    # Step 4: SVR → Predict AGB
+    # -----------------------------
+    idx_vals = np.array([[indices["NDVI"], indices["TNDVI"], indices["SR"], indices["SAVI"], indices["MSAVI2"]]])
+    idx_scaled = svr_scaler_X.transform(idx_vals)
+    agb_scaled = svr_model.predict(idx_scaled)
+    agb = svr_scaler_y.inverse_transform(agb_scaled.reshape(-1, 1)).ravel()[0]
+
+    # -----------------------------
+    # รวมผลลัพธ์
+    # -----------------------------
+    pixel_data.update({
+        "field_reflectance": {
+            "Blue": ref_blue,
+            "Green": ref_green,
+            "Red": ref_red,
+            "NIR": ref_nir
+        },
+        "indices": indices,
+        "AGB": agb
+    })
+
+    return jsonify(pixel_data)
+
+# -----------------------------
+# Endpoint: ดึงค่า Area Reflectance + predict models
+# -----------------------------
+@app.route('/get_area', methods=['POST'])
+def get_area():
+    start = request.json['start']
+    end = request.json['end']
+    area = request.json['area']
+
+    sw_lat = float(area['sw_lat'])
+    sw_lon = float(area['sw_lon'])
+    ne_lat = float(area['ne_lat'])
+    ne_lon = float(area['ne_lon'])
+    geom = ee.Geometry.Rectangle([sw_lon, sw_lat, ne_lon, ne_lat])
+
+    collection = (
+        ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
+        .filterDate(start, end)
+        .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
+        .map(mask_s2_clouds_reflectance)
+    )
+
+    image = collection.mean()
+    bands = image.reduceRegion(reducer=ee.Reducer.mean(), geometry=geom, scale=10)
+    pixel_data = bands.getInfo()
+
+    # -----------------------------
+    # Step 1: ดึงค่า Blue, Green, Red, NIR (ค่าเฉลี่ย)
+    # -----------------------------
+    blue = float(pixel_data.get("B2", 0))
+    green = float(pixel_data.get("B3", 0))
+    red = float(pixel_data.get("B4", 0))
+    nir = float(pixel_data.get("B8", 0))
+
+    # -----------------------------
+    # Step 2: MLP → Field Reflectance
+    # -----------------------------
+    X = np.array([[blue, green, red, nir]])
+    X_scaled = scaler_X.transform(X)
+    y_pred_scaled = mlp_model.predict(X_scaled)
+    field_reflectance = scaler_y.inverse_transform(y_pred_scaled)
+
+    # -----------------------------
+    # Step 2.5: REF → Cor Field Reflectance
+    # -----------------------------
+    ref_X_scaled = ref_scaler_X.transform(field_reflectance)
+    ref_y_pred_scaled = ref_model.predict(ref_X_scaled)
+    ref_field_reflectance = ref_scaler_y.inverse_transform(ref_y_pred_scaled)
+    ref_blue, ref_green, ref_red, ref_nir = ref_field_reflectance.ravel()
+
+    # -----------------------------
+    # Step 3: คำนวณดัชนี 5 ตัว
+    # -----------------------------
+    indices = calculate_indices(ref_blue, ref_green, ref_red, ref_nir)
+
+    # -----------------------------
+    # Step 4: SVR → Predict AGB
+    # -----------------------------
+    idx_vals = np.array([[indices["NDVI"], indices["TNDVI"], indices["SR"], indices["SAVI"], indices["MSAVI2"]]])
+    idx_scaled = svr_scaler_X.transform(idx_vals)
+    agb_scaled = svr_model.predict(idx_scaled)
+    agb = svr_scaler_y.inverse_transform(agb_scaled.reshape(-1, 1)).ravel()[0]
+
+    # -----------------------------
+    # รวมผลลัพธ์
+    # -----------------------------
+    pixel_data.update({
+        "field_reflectance": {
+            "Blue": ref_blue,
+            "Green": ref_green,
+            "Red": ref_red,
+            "NIR": ref_nir
+        },
+        "indices": indices,
+        "AGB": agb
+    })
+
+    return jsonify(pixel_data)
+
+# -----------------------------
+if __name__ == '__main__':
+    app.run(debug=True)
