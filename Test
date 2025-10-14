@@ -1,93 +1,17 @@
-from flask import Flask, render_template, request, jsonify
-import ee
-import joblib
-import numpy as np
-from indices import calculate_indices  # ใช้สูตรที่คุณเขียนไว้ใน indices.py
-
-# -----------------------------
-# Init Earth Engine
-# -----------------------------
-ee.Initialize(project='map-web-473508')
-
-app = Flask(__name__)
-
-# -----------------------------
-# โหลดโมเดลและ Scaler
-# -----------------------------
-mlp_model = joblib.load("models/mlp_model.pkl")
-scaler_X = joblib.load("models/scaler_X.save")
-scaler_y = joblib.load("models/scaler_y.save")
-
-ref_model = joblib.load("models/ref_model.pkl")
-ref_scaler_X = joblib.load("models/ref_scaler_X.save")
-ref_scaler_y = joblib.load("models/ref_scaler_y.save")
-
-svr_model = joblib.load("models/svr_agb_model.pkl")
-svr_scaler_X = joblib.load("models/svr_scaler_X.save")
-svr_scaler_y = joblib.load("models/svr_scaler_y.save")
-
-# -----------------------------
-# Cloud Mask Functions
-# -----------------------------
-def mask_s2_clouds_reflectance(image):
-    qa = image.select('QA60')
-    cloud_bit_mask = 1 << 10
-    cirrus_bit_mask = 1 << 11
-    mask = (
-        qa.bitwiseAnd(cloud_bit_mask).eq(0)
-        .And(qa.bitwiseAnd(cirrus_bit_mask).eq(0))
-    )
-    return image.updateMask(mask).divide(10000)
-
-def mask_s2_clouds_dn(image):
-    qa = image.select('QA60')
-    cloud_bit_mask = 1 << 10
-    cirrus_bit_mask = 1 << 11
-    mask = qa.bitwiseAnd(cloud_bit_mask).eq(0).And(qa.bitwiseAnd(cirrus_bit_mask).eq(0))
-    dn_image = image.divide(10000).multiply(100).toUint16()
-    return dn_image.updateMask(mask)
-
-# -----------------------------
-@app.route('/')
-def index():
-    return render_template('index.html')
-
-# -----------------------------
-# Endpoint: โหลด Sentinel-2 Map
-# -----------------------------
-@app.route('/get_map', methods=['POST'])
-def get_map():
-    start = request.json['start']
-    end = request.json['end']
-
-    collection_ref = (
-        ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
-        .filterDate(start, end)
-        .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
-        .map(mask_s2_clouds_reflectance)
-    )
-
-    image_ref = collection_ref.mean()
-    vis_sentinel = {'bands': ['B4', 'B3', 'B2'], 'min': 0.0, 'max': 0.3, 'gamma': 1.0}
-    map_id_sentinel = ee.Image(image_ref).getMapId(vis_sentinel)
-
-    return jsonify({
-        'sentinel_url': map_id_sentinel['tile_fetcher'].url_format
-    })
-
-# -----------------------------
-# Endpoint: ดึงค่า Reflectance เฉลี่ยของพื้นที่ + Predict AGB
-# -----------------------------
 @app.route('/get_area', methods=['POST'])
 def get_area():
-    coords = request.json['coords']  # [[lon, lat], [lon, lat], ...]
-    start = request.json['start']
-    end = request.json['end']
+    data = request.get_json(force=True)
+    coords = data['coords']
+    start = data['start']
+    end = data['end']
 
-    # สร้าง Polygon geometry จาก coords
-    polygon = ee.Geometry.Polygon([coords])
+    # รองรับพิกัดจาก leaflet
+    if isinstance(coords[0][0], list):
+        polygon = ee.Geometry.Polygon(coords)
+    else:
+        polygon = ee.Geometry.Polygon([coords])
 
-    # ดึงภาพ Sentinel-2 ช่วงเวลาที่เลือก
+    # โหลดภาพ Sentinel-2 แล้วกรองตามวันที่และเมฆ
     collection = (
         ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
         .filterDate(start, end)
@@ -95,60 +19,51 @@ def get_area():
         .map(mask_s2_clouds_reflectance)
     )
 
+    # เฉลี่ยภาพตลอดช่วงเวลา
     image = collection.mean()
 
-    # -----------------------------
-    # ดึงค่าเฉลี่ยของ band ต่าง ๆ ในพื้นที่
-    # -----------------------------
+    # ✅ คำนวณค่าเฉลี่ยของแต่ละ band ภายใน polygon โดยตรง
     mean_dict = image.reduceRegion(
         reducer=ee.Reducer.mean(),
         geometry=polygon,
         scale=10,
-        maxPixels=1e9
+        maxPixels=1e9,
+        tileScale=4
     ).getInfo()
 
-    try:
-        blue = float(mean_dict.get("B2", 0))
-        green = float(mean_dict.get("B3", 0))
-        red = float(mean_dict.get("B4", 0))
-        nir = float(mean_dict.get("B8", 0))
-    except:
-        return jsonify({"error": "invalid area reflectance values"})
+    # ถ้าไม่มีค่า valid
+    if not mean_dict or mean_dict.get('B2') is None:
+        return jsonify({'error': 'No valid pixel values found in this area.'})
 
-    # -----------------------------
-    # Step 2: MLP → Field Reflectance
-    # -----------------------------
+    blue = float(mean_dict.get("B2", 0))
+    green = float(mean_dict.get("B3", 0))
+    red = float(mean_dict.get("B4", 0))
+    nir = float(mean_dict.get("B8", 0))
+
+    # ---- Pipeline model ตามปกติ ----
     X = np.array([[blue, green, red, nir]])
     X_scaled = scaler_X.transform(X)
     y_pred_scaled = mlp_model.predict(X_scaled)
     field_reflectance = scaler_y.inverse_transform(y_pred_scaled)
 
-    # -----------------------------
-    # Step 2.5: REF → Cor Field Reflectance
-    # -----------------------------
     ref_X_scaled = ref_scaler_X.transform(field_reflectance)
     ref_y_pred_scaled = ref_model.predict(ref_X_scaled)
     ref_field_reflectance = ref_scaler_y.inverse_transform(ref_y_pred_scaled)
-
     ref_blue, ref_green, ref_red, ref_nir = ref_field_reflectance.ravel()
 
-    # -----------------------------
-    # Step 3: คำนวณดัชนี 5 ตัว
-    # -----------------------------
     indices = calculate_indices(ref_blue, ref_green, ref_red, ref_nir)
 
-    # -----------------------------
-    # Step 4: SVR → Predict AGB
-    # -----------------------------
     idx_vals = np.array([[indices["NDVI"], indices["TNDVI"], indices["SR"], indices["SAVI"], indices["MSAVI2"]]])
     idx_scaled = svr_scaler_X.transform(idx_vals)
     agb_scaled = svr_model.predict(idx_scaled)
     agb = svr_scaler_y.inverse_transform(agb_scaled.reshape(-1, 1)).ravel()[0]
 
-    # -----------------------------
-    # รวมผลลัพธ์
-    # -----------------------------
-    result = {
+    # ✅ เพิ่มข้อมูลขนาดพื้นที่จาก GEE
+    area_sqm = polygon.area().getInfo()
+    area_ha = area_sqm / 10000
+    area_rai = area_sqm / 1600
+
+    return jsonify({
         "mean_reflectance": {
             "Blue": blue,
             "Green": green,
@@ -162,7 +77,10 @@ def get_area():
             "NIR": ref_nir
         },
         "indices": indices,
-        "AGB_mean": agb
-    }
-
-    return jsonify(result)
+        "AGB_mean": agb,
+        "area": {
+            "sqm": area_sqm,
+            "hectare": area_ha,
+            "rai": area_rai
+        }
+    })
