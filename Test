@@ -1,250 +1,75 @@
-<!DOCTYPE html>
-<html lang="th">
-<head>
-    <meta charset="UTF-8">
-    <title>Satellite Reflectance & AGB Analysis</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<div class="section">
+  <div class="section-title">Mode Selection</div>
+  <div style="display:flex; gap:16px; margin-bottom:16px;">
+    <label><input type="radio" name="mode" value="point" checked> Analyze Point (10x12)</label>
+    <label><input type="radio" name="mode" value="area"> Analyze Area</label>
+  </div>
+</div>
 
-    <!-- Leaflet CSS -->
-    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
-    <link rel="stylesheet" href="https://unpkg.com/leaflet-draw/dist/leaflet.draw.css" />
+let mode = 'point';
+document.querySelectorAll('input[name="mode"]').forEach(r=>{
+  r.addEventListener('change', e=>{
+    mode = e.target.value;
+    if(mode === 'area'){
+      document.getElementById('lat').parentElement.style.display = 'none';
+      document.getElementById('lon').parentElement.style.display = 'none';
+      document.getElementById('getPixel').style.display = 'none';
+    } else {
+      document.getElementById('lat').parentElement.style.display = 'block';
+      document.getElementById('lon').parentElement.style.display = 'block';
+      document.getElementById('getPixel').style.display = 'block';
+    }
+  });
+});
 
-    <style>
-        body {
-            margin: 0;
-            font-family: "Prompt", sans-serif;
-        }
+// Leaflet Draw สำหรับโหมด Area
+let drawnItems = new L.FeatureGroup().addTo(map);
+let drawControl = new L.Control.Draw({
+  edit: { featureGroup: drawnItems },
+  draw: {
+    polygon: { allowIntersection: false },
+    rectangle: true,
+    marker: false,
+    polyline: false,
+    circle: false,
+    circlemarker: false
+  }
+});
+map.addControl(drawControl);
 
-        #map {
-            height: 90vh;
-            width: 100%;
-        }
+map.on(L.Draw.Event.CREATED, async function (e) {
+  if(mode !== 'area') return;
+  drawnItems.clearLayers();
+  let layer = e.layer;
+  drawnItems.addLayer(layer);
+  let coords = layer.getLatLngs()[0].map(c => [c.lng, c.lat]);
+  let start = document.getElementById('start').value;
+  let end = document.getElementById('end').value;
 
-        .control-panel {
-            background: white;
-            padding: 10px 15px;
-            border-radius: 10px;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.3);
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            justify-content: space-between;
-        }
+  let resp = await fetch('/get_area', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({coords, start, end})
+  });
+  let pixel = await resp.json();
 
-        .date-control {
-            display: flex;
-            align-items: center;
-            gap: 5px;
-        }
-
-        .mode-control {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-
-        .result-box {
-            background: #fff;
-            border-radius: 10px;
-            padding: 15px;
-            margin: 10px;
-            width: 350px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
-            position: absolute;
-            top: 100px;
-            right: 20px;
-            z-index: 1000;
-            max-height: 80vh;
-            overflow-y: auto;
-        }
-
-        label {
-            font-weight: 500;
-        }
-
-        button {
-            background: #1976d2;
-            color: white;
-            border: none;
-            padding: 6px 14px;
-            border-radius: 8px;
-            cursor: pointer;
-        }
-
-        button:hover {
-            background: #0d47a1;
-        }
-
-        .mode-option {
-            display: flex;
-            align-items: center;
-            gap: 5px;
-        }
-
-        .loader {
-            display: none;
-            border: 4px solid #f3f3f3;
-            border-top: 4px solid #1976d2;
-            border-radius: 50%;
-            width: 26px;
-            height: 26px;
-            animation: spin 1s linear infinite;
-        }
-
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-    </style>
-</head>
-
-<body>
-    <div class="control-panel">
-        <div class="date-control">
-            <label>Start:</label>
-            <input type="date" id="start" />
-            <label>End:</label>
-            <input type="date" id="end" />
-        </div>
-
-        <div class="mode-control">
-            <div class="mode-option">
-                <input type="radio" name="mode" id="pointMode" value="point" checked>
-                <label for="pointMode">Analyze Point (10×12)</label>
-            </div>
-            <div class="mode-option">
-                <input type="radio" name="mode" id="areaMode" value="area">
-                <label for="areaMode">Analyze Area</label>
-            </div>
-        </div>
-
-        <button id="loadMapBtn">Load Map</button>
-        <div class="loader" id="loadingSpinner"></div>
-    </div>
-
-    <div id="map"></div>
-    <div class="result-box" id="results">
-        <h3>ผลลัพธ์การวิเคราะห์</h3>
-        <div id="output">คลิกหรือวาดพื้นที่บนแผนที่เพื่อดูผล</div>
-    </div>
-
-    <!-- Leaflet JS -->
-    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
-    <script src="https://unpkg.com/leaflet-draw/dist/leaflet.draw.js"></script>
-
-    <script>
-        let map = L.map('map').setView([17.6, 100.1], 8);
-        let drawnItems = new L.FeatureGroup().addTo(map);
-        let mode = "point";
-        let sentinelLayer, theosLayer;
-
-        // ---------------- Load Map Tiles ----------------
-        async function loadMap() {
-            const start = document.getElementById('start').value;
-            const end = document.getElementById('end').value;
-            const loader = document.getElementById('loadingSpinner');
-            loader.style.display = 'block';
-
-            const res = await fetch('/get_map', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ start, end })
-            });
-            const data = await res.json();
-            loader.style.display = 'none';
-
-            if (sentinelLayer) map.removeLayer(sentinelLayer);
-            if (theosLayer) map.removeLayer(theosLayer);
-
-            sentinelLayer = L.tileLayer(data.sentinel_url, { attribution: 'Sentinel-2 SR' }).addTo(map);
-            theosLayer = L.tileLayer(data.theos_url, { attribution: 'THEOS-style DN' });
-        }
-
-        document.getElementById("loadMapBtn").addEventListener("click", loadMap);
-
-        // ---------------- Mode Toggle ----------------
-        document.querySelectorAll('input[name="mode"]').forEach(radio => {
-            radio.addEventListener('change', (e) => {
-                mode = e.target.value;
-                drawnItems.clearLayers();
-            });
-        });
-
-        // ---------------- Leaflet Draw ----------------
-        const drawControl = new L.Control.Draw({
-            edit: { featureGroup: drawnItems },
-            draw: {
-                polygon: true,
-                marker: true,
-                circle: false,
-                rectangle: false,
-                polyline: false,
-            }
-        });
-        map.addControl(drawControl);
-
-        map.on(L.Draw.Event.CREATED, async function (e) {
-            drawnItems.clearLayers();
-            const layer = e.layer;
-            drawnItems.addLayer(layer);
-
-            const start = document.getElementById('start').value;
-            const end = document.getElementById('end').value;
-
-            if (mode === "point") {
-                const lat = layer.getLatLng().lat;
-                const lon = layer.getLatLng().lng;
-
-                const res = await fetch('/get_pixel', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ lat, lon, start, end })
-                });
-                const data = await res.json();
-                showResult(data);
-            }
-
-            else if (mode === "area") {
-                const coords = layer.getLatLngs()[0].map(c => [c.lng, c.lat]);
-                const res = await fetch('/get_area', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ coords, start, end })
-                });
-                const data = await res.json();
-                showResult(data);
-            }
-        });
-
-        // ---------------- Show Result ----------------
-        function showResult(data) {
-            const out = document.getElementById("output");
-            if (data.error) {
-                out.innerHTML = `<b style="color:red;">${data.error}</b>`;
-                return;
-            }
-
-            out.innerHTML = `
-                <b>🌍 พื้นที่:</b> ${(data.area?.rai || 0).toFixed(2)} ไร่ (${(data.area?.hectare || 0).toFixed(2)} ha)<br><br>
-                <b>☀️ Mean Reflectance (TOA):</b><br>
-                Blue: ${data.mean_reflectance?.Blue?.toFixed(3)}<br>
-                Green: ${data.mean_reflectance?.Green?.toFixed(3)}<br>
-                Red: ${data.mean_reflectance?.Red?.toFixed(3)}<br>
-                NIR: ${data.mean_reflectance?.NIR?.toFixed(3)}<br><br>
-                <b>🌾 Field Reflectance:</b><br>
-                Blue: ${data.field_reflectance?.Blue?.toFixed(3)}<br>
-                Green: ${data.field_reflectance?.Green?.toFixed(3)}<br>
-                Red: ${data.field_reflectance?.Red?.toFixed(3)}<br>
-                NIR: ${data.field_reflectance?.NIR?.toFixed(3)}<br><br>
-                <b>📊 Vegetation Indices:</b><br>
-                NDVI: ${data.indices?.NDVI?.toFixed(3)}<br>
-                TNDVI: ${data.indices?.TNDVI?.toFixed(3)}<br>
-                SR: ${data.indices?.SR?.toFixed(3)}<br>
-                SAVI: ${data.indices?.SAVI?.toFixed(3)}<br>
-                MSAVI2: ${data.indices?.MSAVI2?.toFixed(3)}<br><br>
-                <b>🌱 AGB Mean:</b> ${data.AGB_mean?.toFixed(3) || data.AGB?.toFixed(3)} kg/m²
-            `;
-        }
-    </script>
-</body>
-</html>
+  function formatVal(val){ if(val==null) return '-'; return Number(val).toFixed(3);}
+  document.getElementById('red').innerText   = formatVal(pixel['B4']);
+  document.getElementById('green').innerText = formatVal(pixel['B3']);
+  document.getElementById('blue').innerText  = formatVal(pixel['B2']);
+  document.getElementById('nir').innerText   = formatVal(pixel['B8']);
+  if(pixel.field_reflectance){
+    document.getElementById('fblue').innerText  = formatVal(pixel.field_reflectance.Blue);
+    document.getElementById('fgreen').innerText = formatVal(pixel.field_reflectance.Green);
+    document.getElementById('fred').innerText   = formatVal(pixel.field_reflectance.Red);
+    document.getElementById('fnir').innerText   = formatVal(pixel.field_reflectance.NIR);
+  }
+  if(pixel.indices){
+    document.getElementById('ndvi').innerText  = formatVal(pixel.indices.NDVI);
+    document.getElementById('tndvi').innerText = formatVal(pixel.indices.TNDVI);
+    document.getElementById('sr').innerText    = formatVal(pixel.indices.SR);
+    document.getElementById('savi').innerText  = formatVal(pixel.indices.SAVI);
+    document.getElementById('msavi2').innerText= formatVal(pixel.indices.MSAVI2);
+  }
+  document.getElementById('agb').innerText = formatVal(pixel.AGB);
+});
