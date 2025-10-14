@@ -1,8 +1,11 @@
-import ee
-import os
-import json
-
-# โหลด service account key จาก environment variable
-service_account_info = json.loads(os.environ.get("EE_PRIVATE_KEY"))
-credentials = ee.ServiceAccountCredentials(os.environ.get("EE_ACCOUNT"), service_account_info)
-ee.Initialize(credentials)
+  "type": "service_account",
+  "project_id": "map-web-473508",
+  "private_key_id": "2fd993b4680404acde3aa8552e44eecee9e60385",
+  "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDPey6ZcInJVYA5\ng3ZjrzXUEhgCdBWf/y5cOghbJnixXO9G8wJWyNbYG21kR1DriazIqmVNrkbH9YmD\nzqxH4hIW6wAtjDHAphniEPolZ23WxFC3FEIo7BzxPqgf1SPAyT15C7c0qKxE/YdR\nA5tDzPVh/Qdg5iFRzeWSbXMjGtzGGDQQgQK7GDW+YkI2T0k4Mb+ZFXOK1h7veTxs\n/6Nvac5JEIrwysj8SiHTbtHnLULozMHdFb++IfaWRKCWtu3SPIA4A8hvaXKduMba\neFoqwFbMcuXjeY7yLe/D88FSIUFUPnuIsOflVPeZXtfPQdC/Xdz/bzBwd+dgy7pX\nf3zrnx7ZAgMBAAECggEAR8Zdyv/m8orM9lh3iqmQjgIKY0LkPjqpP4dl355x7y1u\nqxUi8IG+7PikAaY4JJs2dh6YN+S7oK3cugezipR23I3EPH18sp/jYVStLGZY1YyJ\nPaRY9M4lfwFFaOmzWhxj0y2N3b4iBiXMe2arfit3kcPWGxvRV/rJ2btaMsE2saIL\nTMyx0Djqrbq+IpsQy/yOVnMmztZoe/glmaVk7QOtCfq7H7qnFG6qoZZFFBU6hpLc\nsWSGyOtoisDbrJGnknNM3K1FUhozjbCxrszT95tt/hwePPdiNJKDk/Z5AJyfYwed\nt21DKwWqOiBOBNZkLkPUeWvPNjmf9B73DnQ7rzFAbwKBgQDtrnQOpBzayaUf0wVC\nGnKJwvoXe3NfyJK+RJ3tlbWG779rYkSylSBgRhJ4MEb51o2s2BtPqgyxNjVvgVVF\nt5Q5Ipe3qMBQDqcFLb82catHBgCISHF0lew7wlwf1Zkpa3Vj3iTCgopkJWmilfF+\nbe/q2pdc08MunSH16i18m0CmiwKBgQDfeN2VXsWegcu1Mt+qqLoY3g5tfS2geUh/\nmBilgyhilqC5Fy8pEqc2PlY6fSfq0lS5rYy7L5T1RR/EzuI0nfKOgQZlHvHVvKgm\n+nSIo0Gt//REZst50Lpo6qcSlsLGw+9bdg1yQyXvNMNwJHV/0miuZX8G8C6Hbwbt\nc2LnQiugqwKBgQCQd/htKc2sIuLuXBqXGnJCUDQpb80qDEU9x4Fi9xuWgEWOpPVy\nwvgh7JWvXlDV7VbCF71KB+edE4EZXLiTHsnGjMNBTB5Qywc0O6E9G4xrKDfMnpPv\ntG0ZycKrSu7E4V9CK7WWUTiDNMZnn9Jg8bvhuapFLyY1QCdzTTsGwWtjjwKBgFqf\nuDRH35o9BrAvtlaN4BIPkwhBuEwYgxcDRhNw0eLRNNJ6nWxpnRe5RdyoPpTSwPsf\nby/FxwGEC7MTNtahquixWDePygCkZgiQjsuOcScv4g4PJbr7s2yypBg8vTY/5QRR\nJnjM1EhiPFNw5Zl1aXA3xsC4jBXuJ4AJx/UCd5DLAoGBAKorpM/KY+8e7TtyuI2s\nmTZAoA19++obRBh6HB7rtp4o1GtCtrcxl8aJdp4YL2y1W3gNdNx6KD7M6KJ85gx9\nhvXnKlOccqvjn2+EmKuzUhJSfzYZ3hU6a85erPqNfO7F1Zc+xifi4f/Y0qHF1Enx\nDX5vGEBaYsSyCR3WrBkbPHCJ\n-----END PRIVATE KEY-----\n",
+  "client_email": "admin-164@map-web-473508.iam.gserviceaccount.com",
+  "client_id": "104803956912743563586",
+  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+  "token_uri": "https://oauth2.googleapis.com/token",
+  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/admin-164%40map-web-473508.iam.gserviceaccount.com",
+  "universe_domain": "googleapis.com"
