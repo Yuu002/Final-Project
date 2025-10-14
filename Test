@@ -5,13 +5,13 @@ def get_area():
     start = data['start']
     end = data['end']
 
-    # ✅ รองรับพิกัดจาก leaflet
+    # ✅ รองรับ polygon จาก leaflet
     if isinstance(coords[0][0], list):
         polygon = ee.Geometry.Polygon(coords)
     else:
         polygon = ee.Geometry.Polygon([coords])
 
-    # ✅ โหลดภาพ Sentinel-2 แล้วกรองตามวันที่และเมฆ
+    # ✅ โหลดภาพ Sentinel-2 SR และกรองวันที่ + เมฆ
     collection = (
         ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
         .filterDate(start, end)
@@ -19,32 +19,39 @@ def get_area():
         .map(mask_s2_clouds_reflectance)
     )
 
-    # ✅ เฉลี่ยภาพตลอดช่วงเวลา
+    # ✅ เฉลี่ยภาพตามช่วงเวลา
     image = collection.mean()
 
-    # ✅ คำนวณค่าเฉลี่ยเชิงพื้นที่ของแต่ละ band ใน polygon
-    mean_sum_count = image.reduceRegion(
-        reducer=ee.Reducer.sum().combine(
-            reducer2=ee.Reducer.count(),
-            sharedInputs=True
-        ),
-        geometry=polygon,
-        scale=10,
-        maxPixels=1e9,
-        tileScale=4
-    ).getInfo()
+    # ✅ เลือกเฉพาะ band ที่ต้องการ
+    bands = ['B2', 'B3', 'B4', 'B8']
+    image = image.select(bands)
 
-    def calc_mean(band):
-        s = mean_sum_count.get(f"{band}_sum", 0)
-        c = mean_sum_count.get(f"{band}_count", 0)
-        if not c or s is None:
-            return None
-        return float(s) / float(c)
+    # ✅ ดึง pixel ทั้งหมดใน polygon (ลดขนาดด้วย sample)
+    samples = image.sample(region=polygon, scale=10, geometries=False, tileScale=4)
 
-    blue = calc_mean("B2")
-    green = calc_mean("B3")
-    red = calc_mean("B4")
-    nir = calc_mean("B8")
+    # ✅ แปลงเป็น list ของค่า pixel
+    data_list = samples.aggregate_array('B2').combine(
+        samples.aggregate_array('B3')
+    ).combine(
+        samples.aggregate_array('B4')
+    ).combine(
+        samples.aggregate_array('B8')
+    )
+
+    # เพื่อความเสถียร ใช้วิธี reduceRegion แยก band ทีละตัวแทน
+    def get_band_mean(band):
+        return image.select(band).reduceRegion(
+            reducer=ee.Reducer.mean(),
+            geometry=polygon,
+            scale=10,
+            maxPixels=1e9,
+            tileScale=4
+        ).getInfo().get(band)
+
+    blue = get_band_mean("B2")
+    green = get_band_mean("B3")
+    red = get_band_mean("B4")
+    nir = get_band_mean("B8")
 
     # ✅ ตรวจว่ามีค่าครบหรือไม่
     if None in (blue, green, red, nir):
@@ -68,7 +75,7 @@ def get_area():
     agb_scaled = svr_model.predict(idx_scaled)
     agb = svr_scaler_y.inverse_transform(agb_scaled.reshape(-1, 1)).ravel()[0]
 
-    # ✅ เพิ่มข้อมูลขนาดพื้นที่จาก GEE
+    # ✅ ขนาดพื้นที่
     area_sqm = polygon.area().getInfo()
     area_ha = area_sqm / 10000
     area_rai = area_sqm / 1600
