@@ -1,91 +1,91 @@
 @app.route('/get_area', methods=['POST'])
 def get_area():
     try:
-        start = request.json['start']
-        end = request.json['end']
-        area = request.json['area']
+        import random
+        data = request.get_json()
+        area = data['area']
+        start = data['start']
+        end = data['end']
 
-        sw_lat = float(area['sw_lat'])
-        sw_lon = float(area['sw_lon'])
-        ne_lat = float(area['ne_lat'])
-        ne_lon = float(area['ne_lon'])
+        # -----------------------------
+        # กำหนดพื้นที่ผู้ใช้วาด (Rectangle)
+        # -----------------------------
+        region = ee.Geometry.Rectangle([
+            [area['sw_lon'], area['sw_lat']],
+            [area['ne_lon'], area['ne_lat']]
+        ])
 
-        # ✅ Geometry
-        geom = ee.Geometry.Rectangle([sw_lon, sw_lat, ne_lon, ne_lat])
-        region_area = geom.area().getInfo()
-        print(f"🧭 Geometry Input: SW=({sw_lat},{sw_lon}), NE=({ne_lat},{ne_lon}), Area={region_area:.2f} m²")
-
-        # ✅ โหลดภาพ Sentinel-2 ที่มี Reflectance (SR)
+        # -----------------------------
+        # ดึงภาพ Sentinel-2 SR
+        # -----------------------------
         collection = (
             ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
             .filterDate(start, end)
+            .filterBounds(region)
             .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
-            .map(mask_s2_clouds_reflectance)
+            .select(['B2', 'B3', 'B4', 'B8'])  # Blue, Green, Red, NIR
         )
 
-        image = collection.mean()
+        image = collection.median()
 
-        # ✅ ดึงข้อมูลพิกเซลจริงในพื้นที่
-        samples = image.sample(
-            region=geom,
-            scale=10,         # Sentinel-2 resolution
-            numPixels=10000,  # จำกัดสูงสุดเพื่อกัน timeout
-            geometries=False
-        )
+        # -----------------------------
+        # สุ่มจุดภายในพื้นที่ เพื่อเอาค่า pixel มาหาค่าเฉลี่ยเอง
+        # -----------------------------
+        sample_points = image.sample(
+            region=region,
+            scale=10,          # Sentinel-2 pixel = 10 m
+            numPixels=500,     # สุ่มตัวอย่าง 500 จุด (ปรับได้)
+            seed=1234,
+            geometries=True
+        ).getInfo()
 
-        bands_list = ["B2", "B3", "B4", "B8"]
-        pixel_data = {}
+        if not sample_points['features']:
+            return jsonify({'error': 'No pixels found in this area.'})
 
-        for b in bands_list:
-            vals = samples.aggregate_array(b).getInfo()
-            vals = [v for v in vals if v is not None]
-            if len(vals) > 0:
-                pixel_data[b] = float(np.mean(vals))
-            else:
-                pixel_data[b] = None
+        # -----------------------------
+        # เอาค่าพิกเซลทั้งหมดมาหาค่าเฉลี่ย
+        # -----------------------------
+        vals = {'B2': [], 'B3': [], 'B4': [], 'B8': []}
+        for f in sample_points['features']:
+            prop = f['properties']
+            for b in vals:
+                if b in prop and prop[b] is not None:
+                    vals[b].append(prop[b])
 
-        print("🎯 ค่าเฉลี่ยจากพิกเซลจริงในพื้นที่:", pixel_data)
-
-        if not pixel_data or len([v for v in pixel_data.values() if v is not None]) == 0:
-            return jsonify({"error": "ไม่พบค่าพิกเซลที่ใช้ได้ (อาจมีเมฆทั้งหมด)"}), 400
-
-        # ✅ Step 1: ดึงค่าเฉลี่ยของแต่ละแบนด์
-        blue = float(pixel_data.get("B2", 0))
-        green = float(pixel_data.get("B3", 0))
-        red = float(pixel_data.get("B4", 0))
-        nir = float(pixel_data.get("B8", 0))
-
-        # ✅ Step 2: พยากรณ์ Field Reflectance (MLP)
-        X = np.array([[blue, green, red, nir]])
-        X_scaled = scaler_X.transform(X)
-        y_pred_scaled = mlp_model.predict(X_scaled)
-        field_reflectance = scaler_y.inverse_transform(y_pred_scaled)
-
-        # ✅ Step 3: ปรับค่าด้วย Ref Model
-        ref_X_scaled = ref_scaler_X.transform(field_reflectance)
-        ref_y_pred_scaled = ref_model.predict(ref_X_scaled)
-        ref_field_reflectance = ref_scaler_y.inverse_transform(ref_y_pred_scaled)
-        ref_blue, ref_green, ref_red, ref_nir = ref_field_reflectance.ravel()
-
-        # ✅ Step 4: คำนวณดัชนีพืชพรรณ
-        indices = calculate_indices(ref_blue, ref_green, ref_red, ref_nir)
-
-        # ✅ Step 5: พยากรณ์ AGB (SVR)
-        idx_vals = np.array([[indices["NDVI"], indices["TNDVI"], indices["SR"], indices["SAVI"], indices["MSAVI2"]]])
-        idx_scaled = svr_scaler_X.transform(idx_vals)
-        agb_scaled = svr_model.predict(idx_scaled)
-        agb = svr_scaler_y.inverse_transform(agb_scaled.reshape(-1, 1)).ravel()[0]
-
-        # ✅ สรุปผลลัพธ์
-        result = {
-            "reflectance": {"Blue": ref_blue, "Green": ref_green, "Red": ref_red, "NIR": ref_nir},
-            "indices": indices,
-            "AGB": agb
+        reflectance = {
+            'Blue': sum(vals['B2']) / len(vals['B2']) / 10000 if vals['B2'] else 0,
+            'Green': sum(vals['B3']) / len(vals['B3']) / 10000 if vals['B3'] else 0,
+            'Red': sum(vals['B4']) / len(vals['B4']) / 10000 if vals['B4'] else 0,
+            'NIR': sum(vals['B8']) / len(vals['B8']) / 10000 if vals['B8'] else 0
         }
 
-        print(f"✅ Area Calculation Success: {result}")
-        return jsonify(result)
+        # -----------------------------
+        # คำนวณค่าดัชนี (NDVI, SAVI, ฯลฯ)
+        # -----------------------------
+        from indices import calculate_indices
+        indices = calculate_indices(reflectance)
+
+        # -----------------------------
+        # โหลดโมเดลทำนาย AGB
+        # -----------------------------
+        model = joblib.load('svr_agb_model.pkl')
+        scaler_X = joblib.load('svr_scaler_X.save')
+        scaler_y = joblib.load('svr_scaler_y.save')
+
+        X = np.array([[reflectance['Blue'], reflectance['Green'], reflectance['Red'], reflectance['NIR'],
+                       indices['NDVI'], indices['SAVI'], indices['MSAVI2'], indices['TNDVI'], indices['SR']]])
+        X_scaled = scaler_X.transform(X)
+        y_pred_scaled = model.predict(X_scaled)
+        agb_pred = scaler_y.inverse_transform(y_pred_scaled.reshape(-1, 1))[0][0]
+
+        # -----------------------------
+        # ส่งค่ากลับไปหน้าเว็บ
+        # -----------------------------
+        return jsonify({
+            'reflectance': reflectance,
+            'indices': indices,
+            'AGB': float(agb_pred)
+        })
 
     except Exception as e:
-        print(f"❌ ERROR in get_area(): {str(e)}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({'error': str(e)})
