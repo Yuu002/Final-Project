@@ -22,21 +22,24 @@ def get_area():
     # ✅ เฉลี่ยภาพตามช่วงเวลา
     image = collection.mean()
 
-    # ✅ คำนวณค่าเฉลี่ยของแต่ละ band ใน polygon (เฉลี่ยทุก pixel จริง ๆ)
-    def get_band_mean(band):
-        result = image.select(band).reduceRegion(
+    # ✅ ให้ GEE เฉลี่ยค่าทุก pixel ใน polygon โดยตรง (ไม่จำกัดขนาด)
+    def get_band_means_server(image, polygon):
+        result = image.reduceRegion(
             reducer=ee.Reducer.mean(),
             geometry=polygon,
             scale=10,
-            maxPixels=1e9,
-            tileScale=4
+            maxPixels=1e13,
+            tileScale=4,
+            bestEffort=True
         ).getInfo()
-        return result.get(band)
 
-    blue = get_band_mean("B2")
-    green = get_band_mean("B3")
-    red = get_band_mean("B4")
-    nir = get_band_mean("B8")
+        blue = result.get('B2')
+        green = result.get('B3')
+        red = result.get('B4')
+        nir = result.get('B8')
+        return blue, green, red, nir
+
+    blue, green, red, nir = get_band_means_server(image, polygon)
 
     # ✅ ตรวจว่ามีค่าครบหรือไม่
     if None in (blue, green, red, nir):
