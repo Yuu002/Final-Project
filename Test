@@ -1,91 +1,229 @@
-@app.route('/get_area', methods=['POST'])
-def get_area():
-    try:
-        import random
-        data = request.get_json()
-        area = data['area']
-        start = data['start']
-        end = data['end']
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Satellite Analysis</title>
 
-        # -----------------------------
-        # กำหนดพื้นที่ผู้ใช้วาด (Rectangle)
-        # -----------------------------
-        region = ee.Geometry.Rectangle([
-            [area['sw_lon'], area['sw_lat']],
-            [area['ne_lon'], area['ne_lat']]
-        ])
+  <!-- Leaflet -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
 
-        # -----------------------------
-        # ดึงภาพ Sentinel-2 SR
-        # -----------------------------
-        collection = (
-            ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
-            .filterDate(start, end)
-            .filterBounds(region)
-            .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
-            .select(['B2', 'B3', 'B4', 'B8'])  # Blue, Green, Red, NIR
-        )
+  <!-- Leaflet Draw -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet-draw/dist/leaflet.draw.css" />
+  <script src="https://unpkg.com/leaflet-draw/dist/leaflet.draw.js"></script>
 
-        image = collection.median()
+  <style>
+    body {
+      margin: 0;
+      font-family: sans-serif;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+    #controls {
+      background: #f8f9fa;
+      padding: 10px;
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      border-bottom: 1px solid #ccc;
+    }
+    #map {
+      flex: 1;
+      width: 100%;
+    }
+    .info-box {
+      position: absolute;
+      bottom: 10px;
+      left: 10px;
+      background: white;
+      padding: 10px;
+      border-radius: 8px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+      max-width: 350px;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+    .info-box h4 {
+      margin-top: 0;
+    }
+    button {
+      cursor: pointer;
+    }
+  </style>
+</head>
 
-        # -----------------------------
-        # สุ่มจุดภายในพื้นที่ เพื่อเอาค่า pixel มาหาค่าเฉลี่ยเอง
-        # -----------------------------
-        sample_points = image.sample(
-            region=region,
-            scale=10,          # Sentinel-2 pixel = 10 m
-            numPixels=500,     # สุ่มตัวอย่าง 500 จุด (ปรับได้)
-            seed=1234,
-            geometries=True
-        ).getInfo()
+<body>
+  <div id="controls">
+    <label>Start:</label>
+    <input type="date" id="start" />
+    <label>End:</label>
+    <input type="date" id="end" />
+    <button id="loadMap">🌍 Load Map</button>
+    <button id="drawArea">🗺️ Draw Area</button>
+  </div>
 
-        if not sample_points['features']:
-            return jsonify({'error': 'No pixels found in this area.'})
+  <div id="map"></div>
+  <div id="info" class="info-box" style="display:none;"></div>
 
-        # -----------------------------
-        # เอาค่าพิกเซลทั้งหมดมาหาค่าเฉลี่ย
-        # -----------------------------
-        vals = {'B2': [], 'B3': [], 'B4': [], 'B8': []}
-        for f in sample_points['features']:
-            prop = f['properties']
-            for b in vals:
-                if b in prop and prop[b] is not None:
-                    vals[b].append(prop[b])
+  <script>
+    // -------------------------
+    // Initialize Map
+    // -------------------------
+    const map = L.map('map').setView([14.5, 100.5], 7);
+    let currentTileLayer = null;
+    let currentRectangle = null;
 
-        reflectance = {
-            'Blue': sum(vals['B2']) / len(vals['B2']) / 10000 if vals['B2'] else 0,
-            'Green': sum(vals['B3']) / len(vals['B3']) / 10000 if vals['B3'] else 0,
-            'Red': sum(vals['B4']) / len(vals['B4']) / 10000 if vals['B4'] else 0,
-            'NIR': sum(vals['B8']) / len(vals['B8']) / 10000 if vals['B8'] else 0
+    // Default base map
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19
+    }).addTo(map);
+
+    // -------------------------
+    // Draw Control Setup
+    // -------------------------
+    const drawnItems = new L.FeatureGroup().addTo(map);
+    const drawControl = new L.Control.Draw({
+      draw: {
+        marker: false,
+        polygon: false,
+        polyline: false,
+        circle: false,
+        circlemarker: false,
+        rectangle: {
+          shapeOptions: {
+            color: '#2563eb',
+            weight: 2,
+            fillOpacity: 0.1
+          }
+        }
+      },
+      edit: {
+        featureGroup: drawnItems,
+        remove: true
+      }
+    });
+    map.addControl(drawControl);
+
+    // -------------------------
+    // Load Sentinel Map
+    // -------------------------
+    document.getElementById("loadMap").onclick = async () => {
+      const start = document.getElementById("start").value;
+      const end = document.getElementById("end").value;
+
+      if (!start || !end) {
+        alert("กรุณาเลือกวันที่เริ่มต้นและสิ้นสุดก่อน!");
+        return;
+      }
+
+      try {
+        const res = await fetch("/get_map", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ start, end })
+        });
+
+        const data = await res.json();
+        if (!data.sentinel_url) {
+          alert("ไม่สามารถโหลดแผนที่ได้: " + (data.error || "unknown error"));
+          return;
         }
 
-        # -----------------------------
-        # คำนวณค่าดัชนี (NDVI, SAVI, ฯลฯ)
-        # -----------------------------
-        from indices import calculate_indices
-        indices = calculate_indices(reflectance)
+        // ลบ layer เก่าออกก่อน
+        if (currentTileLayer) map.removeLayer(currentTileLayer);
 
-        # -----------------------------
-        # โหลดโมเดลทำนาย AGB
-        # -----------------------------
-        model = joblib.load('svr_agb_model.pkl')
-        scaler_X = joblib.load('svr_scaler_X.save')
-        scaler_y = joblib.load('svr_scaler_y.save')
+        // เพิ่ม Sentinel-2 Map Tile ใหม่
+        currentTileLayer = L.tileLayer(data.sentinel_url, {
+          attribution: "Sentinel-2 Imagery",
+          maxZoom: 14
+        }).addTo(map);
 
-        X = np.array([[reflectance['Blue'], reflectance['Green'], reflectance['Red'], reflectance['NIR'],
-                       indices['NDVI'], indices['SAVI'], indices['MSAVI2'], indices['TNDVI'], indices['SR']]])
-        X_scaled = scaler_X.transform(X)
-        y_pred_scaled = model.predict(X_scaled)
-        agb_pred = scaler_y.inverse_transform(y_pred_scaled.reshape(-1, 1))[0][0]
+        alert("✅ โหลดแผนที่ดาวเทียมสำเร็จ!");
+      } catch (err) {
+        console.error(err);
+        alert("❌ โหลดแผนที่ไม่สำเร็จ!");
+      }
+    };
 
-        # -----------------------------
-        # ส่งค่ากลับไปหน้าเว็บ
-        # -----------------------------
-        return jsonify({
-            'reflectance': reflectance,
-            'indices': indices,
-            'AGB': float(agb_pred)
-        })
+    // -------------------------
+    // Draw Rectangle Event
+    // -------------------------
+    document.getElementById("drawArea").onclick = function () {
+      new L.Draw.Rectangle(map, drawControl.options.draw.rectangle).enable();
+    };
 
-    except Exception as e:
-        return jsonify({'error': str(e)})
+    map.on("draw:created", async function (e) {
+      // เคลียร์ของเก่า
+      if (currentRectangle) map.removeLayer(currentRectangle);
+
+      currentRectangle = e.layer;
+      drawnItems.addLayer(currentRectangle);
+
+      const bounds = currentRectangle.getBounds();
+      const sw = bounds.getSouthWest();
+      const ne = bounds.getNorthEast();
+
+      const start = document.getElementById("start").value;
+      const end = document.getElementById("end").value;
+
+      if (!start || !end) {
+        alert("กรุณาเลือกช่วงวันที่ก่อนวิเคราะห์!");
+        return;
+      }
+
+      const area = {
+        sw_lat: sw.lat,
+        sw_lon: sw.lng,
+        ne_lat: ne.lat,
+        ne_lon: ne.lng
+      };
+
+      // โหลดข้อมูลพื้นที่
+      try {
+        const res = await fetch("/get_area", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ start, end, area })
+        });
+
+        const data = await res.json();
+        showInfo(data);
+      } catch (err) {
+        console.error(err);
+        alert("❌ ไม่สามารถวิเคราะห์พื้นที่ได้!");
+      }
+    });
+
+    // -------------------------
+    // Display Info
+    // -------------------------
+    function showInfo(data) {
+      const box = document.getElementById("info");
+      box.style.display = "block";
+
+      if (data.error) {
+        box.innerHTML = `<b style="color:red;">Error:</b> ${data.error}`;
+        return;
+      }
+
+      box.innerHTML = `
+        <h4>📊 Area Analysis</h4>
+        <b>Reflectance (เฉลี่ย):</b><br/>
+        Blue: ${data.reflectance.Blue.toFixed(4)}<br/>
+        Green: ${data.reflectance.Green.toFixed(4)}<br/>
+        Red: ${data.reflectance.Red.toFixed(4)}<br/>
+        NIR: ${data.reflectance.NIR.toFixed(4)}<br/><br/>
+        <b>Indices:</b><br/>
+        NDVI: ${data.indices.NDVI.toFixed(4)}<br/>
+        SAVI: ${data.indices.SAVI.toFixed(4)}<br/>
+        MSAVI2: ${data.indices.MSAVI2.toFixed(4)}<br/>
+        TNDVI: ${data.indices.TNDVI.toFixed(4)}<br/>
+        SR: ${data.indices.SR.toFixed(4)}<br/><br/>
+        <b>AGB:</b> ${data.AGB.toFixed(4)}
+      `;
+    }
+  </script>
+</body>
+</html>
