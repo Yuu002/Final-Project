@@ -1,232 +1,250 @@
 <!DOCTYPE html>
-<html>
+<html lang="th">
 <head>
-  <meta charset="utf-8">
-  <title>Sentinel-2 Viewer</title>
-  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
-  <link rel="stylesheet" href="https://unpkg.com/leaflet-draw/dist/leaflet.draw.css"/>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { font-family: 'Inter', sans-serif; background: #0f172a; color: #e2e8f0; overflow: hidden; }
+    <meta charset="UTF-8">
+    <title>Satellite Reflectance & AGB Analysis</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-    #map { height: 100vh; width: calc(100% - 420px); float: left; }
-    #sidebar { width: 420px; height: 100vh; float: right; background: linear-gradient(135deg, #1e293b, #0f172a); overflow-y: auto; }
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet-draw/dist/leaflet.draw.css" />
 
-    .header { padding: 32px 28px; background: linear-gradient(135deg, #3b82f6, #2563eb); }
-    .header h1 { font-size: 28px; color: white; margin-bottom: 6px; font-weight: 700; }
-    .header p { color: rgba(255,255,255,0.8); font-size: 14px; }
+    <style>
+        body {
+            margin: 0;
+            font-family: "Prompt", sans-serif;
+        }
 
-    .section { padding: 24px 28px; border-bottom: 1px solid rgba(255,255,255,0.08); }
-    .section-title { font-size: 16px; font-weight: 600; color: #60a5fa; margin-bottom: 16px; }
+        #map {
+            height: 90vh;
+            width: 100%;
+        }
 
-    input[type="date"], input[type="number"] {
-      width: 100%; padding: 10px; margin-bottom: 12px; border-radius: 8px;
-      background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);
-      color: #e2e8f0; font-size: 14px;
-    }
-    button {
-      width: 100%; padding: 12px; border-radius: 8px; background: #2563eb;
-      color: white; border: none; cursor: pointer; font-weight: 600;
-    }
-    button:hover { background: #1d4ed8; }
+        .control-panel {
+            background: white;
+            padding: 10px 15px;
+            border-radius: 10px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            justify-content: space-between;
+        }
 
-    .data-grid { display: grid; gap: 10px; }
-    .data-card {
-      background: rgba(255,255,255,0.05);
-      border: 1px solid rgba(255,255,255,0.1);
-      border-radius: 8px;
-      padding: 10px 14px;
-    }
-    .data-label { font-size: 12px; color: #94a3b8; margin-bottom: 4px; }
-    .data-value { font-size: 18px; font-weight: 600; }
+        .date-control {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
 
-    #modeSelectBox {
-      position: absolute; top: 10px; left: 10px; z-index: 1000;
-      background: white; color: black; padding: 10px 15px; border-radius: 8px;
-      font-size: 14px; line-height: 1.6;
-    }
-  </style>
+        .mode-control {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .result-box {
+            background: #fff;
+            border-radius: 10px;
+            padding: 15px;
+            margin: 10px;
+            width: 350px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+            position: absolute;
+            top: 100px;
+            right: 20px;
+            z-index: 1000;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+
+        label {
+            font-weight: 500;
+        }
+
+        button {
+            background: #1976d2;
+            color: white;
+            border: none;
+            padding: 6px 14px;
+            border-radius: 8px;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background: #0d47a1;
+        }
+
+        .mode-option {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .loader {
+            display: none;
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #1976d2;
+            border-radius: 50%;
+            width: 26px;
+            height: 26px;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
 </head>
+
 <body>
-  <div id="map"></div>
+    <div class="control-panel">
+        <div class="date-control">
+            <label>Start:</label>
+            <input type="date" id="start" />
+            <label>End:</label>
+            <input type="date" id="end" />
+        </div>
 
-  <div id="sidebar">
-    <div class="header">
-      <h1>🛰️ Sentinel-2 Viewer</h1>
-      <p>Earth Observation & Analysis Platform</p>
+        <div class="mode-control">
+            <div class="mode-option">
+                <input type="radio" name="mode" id="pointMode" value="point" checked>
+                <label for="pointMode">Analyze Point (10×12)</label>
+            </div>
+            <div class="mode-option">
+                <input type="radio" name="mode" id="areaMode" value="area">
+                <label for="areaMode">Analyze Area</label>
+            </div>
+        </div>
+
+        <button id="loadMapBtn">Load Map</button>
+        <div class="loader" id="loadingSpinner"></div>
     </div>
 
-    <div class="section">
-      <div class="section-title">Date Range</div>
-      <label>Start Date</label>
-      <input type="date" id="start" value="2020-01-01">
-      <label>End Date</label>
-      <input type="date" id="end" value="2020-01-15">
-      <button id="loadMap">🔍 Load Satellite Imagery</button>
+    <div id="map"></div>
+    <div class="result-box" id="results">
+        <h3>ผลลัพธ์การวิเคราะห์</h3>
+        <div id="output">คลิกหรือวาดพื้นที่บนแผนที่เพื่อดูผล</div>
     </div>
 
-    <div class="section" id="locationSection">
-      <div class="section-title">Location Selection</div>
-      <label>Latitude</label>
-      <input type="number" id="lat" step="0.0001" placeholder="e.g., 19.2000">
-      <label>Longitude</label>
-      <input type="number" id="lon" step="0.0001" placeholder="e.g., 100.1000">
-      <button id="getPixel">📍 Analyze Point</button>
-    </div>
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet-draw/dist/leaflet.draw.js"></script>
 
-    <div class="section" id="coordSection">
-      <div class="section-title">Selected Location</div>
-      <div class="data-grid">
-        <div class="data-card"><div class="data-label">Latitude</div><div class="data-value" id="coordLat">-</div></div>
-        <div class="data-card"><div class="data-label">Longitude</div><div class="data-value" id="coordLon">-</div></div>
-      </div>
-    </div>
+    <script>
+        let map = L.map('map').setView([17.6, 100.1], 8);
+        let drawnItems = new L.FeatureGroup().addTo(map);
+        let mode = "point";
+        let sentinelLayer, theosLayer;
 
-    <div class="section">
-      <div class="section-title">Sentinel-2 Reflectance</div>
-      <div class="data-grid">
-        <div class="data-card"><div class="data-label">🔴 Red (B4)</div><div class="data-value" id="red">-</div></div>
-        <div class="data-card"><div class="data-label">🟢 Green (B3)</div><div class="data-value" id="green">-</div></div>
-        <div class="data-card"><div class="data-label">🔵 Blue (B2)</div><div class="data-value" id="blue">-</div></div>
-        <div class="data-card"><div class="data-label">⚫ NIR (B8)</div><div class="data-value" id="nir">-</div></div>
-      </div>
-    </div>
+        // ---------------- Load Map Tiles ----------------
+        async function loadMap() {
+            const start = document.getElementById('start').value;
+            const end = document.getElementById('end').value;
+            const loader = document.getElementById('loadingSpinner');
+            loader.style.display = 'block';
 
-    <div class="section">
-      <div class="section-title">Vegetation Indices</div>
-      <div class="data-grid">
-        <div class="data-card"><div class="data-label">NDVI</div><div class="data-value" id="ndvi">-</div></div>
-        <div class="data-card"><div class="data-label">TNDVI</div><div class="data-value" id="tndvi">-</div></div>
-        <div class="data-card"><div class="data-label">SR</div><div class="data-value" id="sr">-</div></div>
-        <div class="data-card"><div class="data-label">SAVI</div><div class="data-value" id="savi">-</div></div>
-        <div class="data-card"><div class="data-label">MSAVI2</div><div class="data-value" id="msavi2">-</div></div>
-      </div>
-    </div>
+            const res = await fetch('/get_map', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ start, end })
+            });
+            const data = await res.json();
+            loader.style.display = 'none';
 
-    <div class="section">
-      <div class="section-title">Biomass Estimation</div>
-      <div class="data-card">
-        <div class="data-label">Above Ground Biomass (AGB)</div>
-        <div class="data-value" id="agb">-</div>
-      </div>
-    </div>
-  </div>
+            if (sentinelLayer) map.removeLayer(sentinelLayer);
+            if (theosLayer) map.removeLayer(theosLayer);
 
-  <!-- Mode selector -->
-  <div id="modeSelectBox">
-    <strong>Mode:</strong><br>
-    <label><input type="radio" name="mode" value="point" checked> Analyze Point (10×12)</label><br>
-    <label><input type="radio" name="mode" value="area"> Analyze Area</label>
-  </div>
+            sentinelLayer = L.tileLayer(data.sentinel_url, { attribution: 'Sentinel-2 SR' }).addTo(map);
+            theosLayer = L.tileLayer(data.theos_url, { attribution: 'THEOS-style DN' });
+        }
 
-  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
-  <script src="https://unpkg.com/leaflet-draw/dist/leaflet.draw.js"></script>
+        document.getElementById("loadMapBtn").addEventListener("click", loadMap);
 
-  <script>
-    const map = L.map("map").setView([19.2, 100.1], 10);
-    const osm = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png").addTo(map);
-    let marker, drawnItems = new L.FeatureGroup().addTo(map);
+        // ---------------- Mode Toggle ----------------
+        document.querySelectorAll('input[name="mode"]').forEach(radio => {
+            radio.addEventListener('change', (e) => {
+                mode = e.target.value;
+                drawnItems.clearLayers();
+            });
+        });
 
-    // Draw controls
-    const drawControl = new L.Control.Draw({
-      edit: { featureGroup: drawnItems },
-      draw: { polygon: true, rectangle: true, circle: false, polyline: false, marker: false, circlemarker: false }
-    }).addTo(map);
+        // ---------------- Leaflet Draw ----------------
+        const drawControl = new L.Control.Draw({
+            edit: { featureGroup: drawnItems },
+            draw: {
+                polygon: true,
+                marker: true,
+                circle: false,
+                rectangle: false,
+                polyline: false,
+            }
+        });
+        map.addControl(drawControl);
 
-    // Switch mode visibility
-    function getMode() {
-      return document.querySelector('input[name="mode"]:checked').value;
-    }
+        map.on(L.Draw.Event.CREATED, async function (e) {
+            drawnItems.clearLayers();
+            const layer = e.layer;
+            drawnItems.addLayer(layer);
 
-    function toggleSections() {
-      const mode = getMode();
-      const locSec = document.getElementById("locationSection");
-      const coordSec = document.getElementById("coordSection");
-      if (mode === "area") {
-        locSec.style.display = "none";
-        coordSec.style.display = "none";
-      } else {
-        locSec.style.display = "block";
-        coordSec.style.display = "block";
-      }
-    }
+            const start = document.getElementById('start').value;
+            const end = document.getElementById('end').value;
 
-    document.querySelectorAll('input[name="mode"]').forEach(el => el.addEventListener('change', toggleSections));
-    toggleSections();
+            if (mode === "point") {
+                const lat = layer.getLatLng().lat;
+                const lon = layer.getLatLng().lng;
 
-    // Format helper
-    function fmt(v) { return (v == null || isNaN(v)) ? "-" : Number(v).toFixed(3); }
+                const res = await fetch('/get_pixel', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ lat, lon, start, end })
+                });
+                const data = await res.json();
+                showResult(data);
+            }
 
-    async function showPixel(lat, lon, start, end) {
-      const res = await fetch("/get_pixel", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ lat, lon, start, end })
-      });
-      const px = await res.json();
-      document.getElementById("coordLat").innerText = lat.toFixed(6);
-      document.getElementById("coordLon").innerText = lon.toFixed(6);
-      document.getElementById("red").innerText = fmt(px.B4);
-      document.getElementById("green").innerText = fmt(px.B3);
-      document.getElementById("blue").innerText = fmt(px.B2);
-      document.getElementById("nir").innerText = fmt(px.B8);
-      if (px.indices) {
-        document.getElementById("ndvi").innerText = fmt(px.indices.NDVI);
-        document.getElementById("tndvi").innerText = fmt(px.indices.TNDVI);
-        document.getElementById("sr").innerText = fmt(px.indices.SR);
-        document.getElementById("savi").innerText = fmt(px.indices.SAVI);
-        document.getElementById("msavi2").innerText = fmt(px.indices.MSAVI2);
-      }
-      document.getElementById("agb").innerText = fmt(px.AGB);
-    }
+            else if (mode === "area") {
+                const coords = layer.getLatLngs()[0].map(c => [c.lng, c.lat]);
+                const res = await fetch('/get_area', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ coords, start, end })
+                });
+                const data = await res.json();
+                showResult(data);
+            }
+        });
 
-    async function showArea(geojson, start, end) {
-      const res = await fetch("/get_area", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ geometry: geojson.geometry, start, end })
-      });
-      const data = await res.json();
-      document.getElementById("red").innerText = fmt(data.B4);
-      document.getElementById("green").innerText = fmt(data.B3);
-      document.getElementById("blue").innerText = fmt(data.B2);
-      document.getElementById("nir").innerText = fmt(data.B8);
-      if (data.indices) {
-        document.getElementById("ndvi").innerText = fmt(data.indices.NDVI);
-        document.getElementById("tndvi").innerText = fmt(data.indices.TNDVI);
-        document.getElementById("sr").innerText = fmt(data.indices.SR);
-        document.getElementById("savi").innerText = fmt(data.indices.SAVI);
-        document.getElementById("msavi2").innerText = fmt(data.indices.MSAVI2);
-      }
-      document.getElementById("agb").innerText = fmt(data.AGB);
-    }
+        // ---------------- Show Result ----------------
+        function showResult(data) {
+            const out = document.getElementById("output");
+            if (data.error) {
+                out.innerHTML = `<b style="color:red;">${data.error}</b>`;
+                return;
+            }
 
-    // Click event for point
-    map.on("click", async (e) => {
-      if (getMode() !== "point") return;
-      const lat = e.latlng.lat, lon = e.latlng.lng;
-      document.getElementById("lat").value = lat.toFixed(6);
-      document.getElementById("lon").value = lon.toFixed(6);
-      if (marker) map.removeLayer(marker);
-      marker = L.marker([lat, lon]).addTo(map);
-      await showPixel(lat, lon, document.getElementById("start").value, document.getElementById("end").value);
-    });
-
-    // Draw polygon event
-    map.on(L.Draw.Event.CREATED, async function (e) {
-      if (getMode() !== "area") return;
-      drawnItems.clearLayers();
-      drawnItems.addLayer(e.layer);
-      await showArea(e.layer.toGeoJSON(), document.getElementById("start").value, document.getElementById("end").value);
-    });
-
-    document.getElementById("getPixel").onclick = async function() {
-      const lat = parseFloat(document.getElementById("lat").value);
-      const lon = parseFloat(document.getElementById("lon").value);
-      if (isNaN(lat) || isNaN(lon)) { alert("Please enter valid coordinates!"); return; }
-      await showPixel(lat, lon, document.getElementById("start").value, document.getElementById("end").value);
-    };
-  </script>
+            out.innerHTML = `
+                <b>🌍 พื้นที่:</b> ${(data.area?.rai || 0).toFixed(2)} ไร่ (${(data.area?.hectare || 0).toFixed(2)} ha)<br><br>
+                <b>☀️ Mean Reflectance (TOA):</b><br>
+                Blue: ${data.mean_reflectance?.Blue?.toFixed(3)}<br>
+                Green: ${data.mean_reflectance?.Green?.toFixed(3)}<br>
+                Red: ${data.mean_reflectance?.Red?.toFixed(3)}<br>
+                NIR: ${data.mean_reflectance?.NIR?.toFixed(3)}<br><br>
+                <b>🌾 Field Reflectance:</b><br>
+                Blue: ${data.field_reflectance?.Blue?.toFixed(3)}<br>
+                Green: ${data.field_reflectance?.Green?.toFixed(3)}<br>
+                Red: ${data.field_reflectance?.Red?.toFixed(3)}<br>
+                NIR: ${data.field_reflectance?.NIR?.toFixed(3)}<br><br>
+                <b>📊 Vegetation Indices:</b><br>
+                NDVI: ${data.indices?.NDVI?.toFixed(3)}<br>
+                TNDVI: ${data.indices?.TNDVI?.toFixed(3)}<br>
+                SR: ${data.indices?.SR?.toFixed(3)}<br>
+                SAVI: ${data.indices?.SAVI?.toFixed(3)}<br>
+                MSAVI2: ${data.indices?.MSAVI2?.toFixed(3)}<br><br>
+                <b>🌱 AGB Mean:</b> ${data.AGB_mean?.toFixed(3) || data.AGB?.toFixed(3)} kg/m²
+            `;
+        }
+    </script>
 </body>
 </html>
