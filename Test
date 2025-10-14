@@ -1,156 +1,162 @@
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <title>Sentinel-2 Viewer</title>
-  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
-  <link rel="stylesheet" href="https://unpkg.com/leaflet-draw/dist/leaflet.draw.css"/>
-  <style>
-    body { margin:0; font-family: Inter, sans-serif; background:#0f172a; color:#e2e8f0; }
-    #map { height: 100vh; width: calc(100% - 420px); float: left; }
-    #sidebar { width: 420px; height: 100vh; float: right; background:#1e293b; overflow-y:auto; padding:20px; }
-    button { width:100%; padding:12px; margin-top:8px; background:#2563eb; color:white; border:none; border-radius:8px; cursor:pointer; }
-    input { width:100%; margin-bottom:10px; padding:10px; border-radius:6px; border:1px solid #334155; background:#0f172a; color:white; }
-    .data-card { background:#0f172a; padding:8px; border-radius:6px; margin-top:6px; }
-  </style>
-</head>
+from flask import Flask, render_template, request, jsonify
+import ee
+import joblib
+import numpy as np
+from indices import calculate_indices  # ใช้สูตรที่คุณเขียนไว้ใน indices.py
 
-<body>
-  <div id="map"></div>
-  <div id="sidebar">
-    <h2>🛰️ Sentinel-2 Viewer</h2>
+# -----------------------------
+# Init Earth Engine
+# -----------------------------
+ee.Initialize(project='map-web-473508')
 
-    <h3>1️⃣ Date Range</h3>
-    <input type="date" id="start" value="2020-01-01">
-    <input type="date" id="end" value="2020-01-15">
-    <button id="loadMap">🌍 Load Map</button>
+app = Flask(__name__)
 
-    <h3>2️⃣ Mode</h3>
-    <button id="modePoint">📍 Point Mode</button>
-    <button id="modeArea">🗺️ Area Mode</button>
+# -----------------------------
+# โหลดโมเดลและ Scaler
+# -----------------------------
+mlp_model = joblib.load("models/mlp_model.pkl")
+scaler_X = joblib.load("models/scaler_X.save")
+scaler_y = joblib.load("models/scaler_y.save")
 
-    <div id="info" style="margin-top:15px;">
-      <h3>📊 Results</h3>
-      <div id="results"></div>
-    </div>
-  </div>
+ref_model = joblib.load("models/ref_model.pkl")
+ref_scaler_X = joblib.load("models/ref_scaler_X.save")
+ref_scaler_y = joblib.load("models/ref_scaler_y.save")
 
-  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
-  <script src="https://unpkg.com/leaflet-draw/dist/leaflet.draw.js"></script>
-  <script>
-    let map = L.map('map').setView([19.2, 100.1], 10);
-    let baseLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
-    let marker, rectangle, currentMode = 'point';
-    let drawnItems = new L.FeatureGroup().addTo(map);
-    let sentinelLayer, theosLayer;
+svr_model = joblib.load("models/svr_agb_model.pkl")
+svr_scaler_X = joblib.load("models/svr_scaler_X.save")
+svr_scaler_y = joblib.load("models/svr_scaler_y.save")
 
-    // ---- Draw Control ----
-    const drawControl = new L.Control.Draw({
-      edit: { featureGroup: drawnItems, remove: true },
-      draw: { rectangle: true, polygon: false, polyline: false, circle: false, marker: false }
-    });
-    map.addControl(drawControl);
+# -----------------------------
+# Cloud Mask Functions
+# -----------------------------
+def mask_s2_clouds_reflectance(image):
+    qa = image.select('QA60')
+    cloud_bit_mask = 1 << 10
+    cirrus_bit_mask = 1 << 11
+    mask = (
+        qa.bitwiseAnd(cloud_bit_mask).eq(0)
+        .And(qa.bitwiseAnd(cirrus_bit_mask).eq(0))
+    )
+    return image.updateMask(mask).divide(10000)
 
-    document.getElementById('modePoint').onclick = () => currentMode = 'point';
-    document.getElementById('modeArea').onclick = () => currentMode = 'area';
+def mask_s2_clouds_dn(image):
+    qa = image.select('QA60')
+    cloud_bit_mask = 1 << 10
+    cirrus_bit_mask = 1 << 11
+    mask = qa.bitwiseAnd(cloud_bit_mask).eq(0).And(qa.bitwiseAnd(cirrus_bit_mask).eq(0))
+    dn_image = image.divide(10000).multiply(100).toUint16()
+    return dn_image.updateMask(mask)
 
-    // ---- Load Map ----
-    document.getElementById('loadMap').onclick = async () => {
-      const start = document.getElementById('start').value;
-      const end = document.getElementById('end').value;
-      const res = await fetch('/get_map', {
-        method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ start, end })
-      });
-      const data = await res.json();
-      if(sentinelLayer) map.removeLayer(sentinelLayer);
-      sentinelLayer = L.tileLayer(data.sentinel_url, { attribution: 'Sentinel-2' }).addTo(map);
-      console.log("🛰️ Map loaded:", data);
-    };
+# -----------------------------
+@app.route('/')
+def index():
+    return render_template('index.html')
 
-    // ---- Point Click ----
-    map.on('click', async (e) => {
-      if(currentMode !== 'point') return;
-      const lat = e.latlng.lat, lon = e.latlng.lng;
-      if(marker) map.removeLayer(marker);
-      marker = L.marker([lat, lon]).addTo(map);
-      await getPixelData(lat, lon);
-    });
+# -----------------------------
+# Endpoint: โหลด Sentinel-2 Map
+# -----------------------------
+@app.route('/get_map', methods=['POST'])
+def get_map():
+    start = request.json['start']
+    end = request.json['end']
 
-    // ---- Draw Rectangle ----
-    map.on(L.Draw.Event.CREATED, async (e) => {
-      if(currentMode !== 'area') return;
-      drawnItems.clearLayers();
-      rectangle = e.layer;
-      drawnItems.addLayer(rectangle);
-      const b = rectangle.getBounds();
-      const area = {
-        sw_lat: b.getSouthWest().lat,
-        sw_lon: b.getSouthWest().lng,
-        ne_lat: b.getNorthEast().lat,
-        ne_lon: b.getNorthEast().lng
-      };
-      await getAreaData(area);
-    });
+    collection_ref = (
+        ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
+        .filterDate(start, end)
+        .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
+        .map(mask_s2_clouds_reflectance)
+    )
 
-    // ---- API Calls ----
-    async function getPixelData(lat, lon) {
-      const start = document.getElementById('start').value;
-      const end = document.getElementById('end').value;
-      try {
-        const res = await fetch('/get_pixel', {
-          method: 'POST', headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({ lat, lon, start, end })
-        });
-        const data = await res.json();
-        if (data.error) { showError("Invalid pixel"); return; }
-        updateResults(data);
-      } catch (err) {
-        showError("Pixel request failed");
-      }
-    }
+    image_ref = collection_ref.mean()
+    vis_sentinel = {'bands': ['B4', 'B3', 'B2'], 'min': 0.0, 'max': 0.3, 'gamma': 1.0}
+    map_id_sentinel = ee.Image(image_ref).getMapId(vis_sentinel)
 
-    async function getAreaData(area) {
-      const start = document.getElementById('start').value;
-      const end = document.getElementById('end').value;
-      try {
-        const res = await fetch('/get_area', {
-          method: 'POST', headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({ area, start, end })
-        });
-        const data = await res.json();
-        if (data.error) { showError("Area error"); return; }
-        updateResults(data);
-      } catch (err) {
-        showError("Area request failed");
-      }
-    }
+    return jsonify({
+        'sentinel_url': map_id_sentinel['tile_fetcher'].url_format
+    })
 
-    // ---- Display ----
-    function updateResults(data) {
-      const refl = data.field_reflectance;
-      const idx = data.indices;
-      document.getElementById('results').innerHTML = `
-        <div class="data-card"><b>Reflectance</b><br>
-          Blue: ${refl.Blue.toFixed(3)}<br>
-          Green: ${refl.Green.toFixed(3)}<br>
-          Red: ${refl.Red.toFixed(3)}<br>
-          NIR: ${refl.NIR.toFixed(3)}
-        </div>
-        <div class="data-card"><b>Indices</b><br>
-          NDVI: ${idx.NDVI.toFixed(3)}<br>
-          TNDVI: ${idx.TNDVI.toFixed(3)}<br>
-          SR: ${idx.SR.toFixed(3)}<br>
-          SAVI: ${idx.SAVI.toFixed(3)}<br>
-          MSAVI2: ${idx.MSAVI2.toFixed(3)}
-        </div>
-        <div class="data-card"><b>AGB:</b> ${data.AGB.toFixed(2)}</div>
-      `;
-    }
+# -----------------------------
+# Endpoint: คำนวณค่าจากพื้นที่ที่วาด
+# -----------------------------
+@app.route('/get_area', methods=['POST'])
+def get_area():
+    try:
+        start = request.json['start']
+        end = request.json['end']
+        area = request.json['area']
 
-    function showError(msg) {
-      document.getElementById('results').innerHTML = `<div style="color:red;">⚠️ ${msg}</div>`;
-    }
-  </script>
-</body>
-</html>
+        sw_lat = float(area['sw_lat'])
+        sw_lon = float(area['sw_lon'])
+        ne_lat = float(area['ne_lat'])
+        ne_lon = float(area['ne_lon'])
+
+        # ✅ Debug geometry
+        print(f"Geometry Input: SW=({sw_lat},{sw_lon}), NE=({ne_lat},{ne_lon})")
+
+        geom = ee.Geometry.Rectangle([sw_lon, sw_lat, ne_lon, ne_lat])
+
+        collection = (
+            ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
+            .filterDate(start, end)
+            .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
+            .map(mask_s2_clouds_reflectance)
+        )
+
+        image = collection.mean()
+
+        # ✅ ปรับ scale และ maxPixels
+        bands = image.reduceRegion(
+            reducer=ee.Reducer.mean(),
+            geometry=geom,
+            scale=30,         # ปรับจาก 10 → 30 เพื่อให้ไม่ timeout
+            maxPixels=1e9
+        )
+
+        pixel_data = bands.getInfo()
+        print(f"Raw Pixel Data: {pixel_data}")
+
+        if not pixel_data or len(pixel_data) == 0:
+            return jsonify({"error": "no valid pixels (possibly all masked by clouds)"}), 400
+
+        # Step 1: Extract B2-B8
+        blue = float(pixel_data.get("B2", 0))
+        green = float(pixel_data.get("B3", 0))
+        red = float(pixel_data.get("B4", 0))
+        nir = float(pixel_data.get("B8", 0))
+
+        # Step 2: Predict field reflectance
+        X = np.array([[blue, green, red, nir]])
+        X_scaled = scaler_X.transform(X)
+        y_pred_scaled = mlp_model.predict(X_scaled)
+        field_reflectance = scaler_y.inverse_transform(y_pred_scaled)
+
+        ref_X_scaled = ref_scaler_X.transform(field_reflectance)
+        ref_y_pred_scaled = ref_model.predict(ref_X_scaled)
+        ref_field_reflectance = ref_scaler_y.inverse_transform(ref_y_pred_scaled)
+        ref_blue, ref_green, ref_red, ref_nir = ref_field_reflectance.ravel()
+
+        # Step 3: Indices
+        indices = calculate_indices(ref_blue, ref_green, ref_red, ref_nir)
+
+        # Step 4: Predict AGB
+        idx_vals = np.array([[indices["NDVI"], indices["TNDVI"], indices["SR"], indices["SAVI"], indices["MSAVI2"]]])
+        idx_scaled = svr_scaler_X.transform(idx_vals)
+        agb_scaled = svr_model.predict(idx_scaled)
+        agb = svr_scaler_y.inverse_transform(agb_scaled.reshape(-1, 1)).ravel()[0]
+
+        result = {
+            "reflectance": {"Blue": ref_blue, "Green": ref_green, "Red": ref_red, "NIR": ref_nir},
+            "indices": indices,
+            "AGB": agb
+        }
+
+        print(f"✅ Area Calculation Success: {result}")
+        return jsonify(result)
+
+    except Exception as e:
+        print(f"❌ ERROR in get_area(): {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+# -----------------------------
+if __name__ == '__main__':
+    app.run(debug=True, threaded=True)
