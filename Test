@@ -1,91 +1,164 @@
-# -----------------------------
-# Endpoint: ดึงค่า Reflectance เฉลี่ยของพื้นที่ + Predict AGB
-# -----------------------------
-@app.route('/get_area', methods=['POST'])
-def get_area():
-    coords = request.json['coords']  # [[lon, lat], [lon, lat], ...]
-    start = request.json['start']
-    end = request.json['end']
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <title>AGB Estimation Map</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-    # สร้าง Polygon geometry จาก coords
-    polygon = ee.Geometry.Polygon([coords])
+    <!-- Leaflet -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
-    # ดึงภาพ Sentinel-2 ช่วงเวลาที่เลือก
-    collection = (
-        ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
-        .filterDate(start, end)
-        .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
-        .map(mask_s2_clouds_reflectance)
-    )
+    <!-- Leaflet Draw -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css"/>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
 
-    image = collection.mean()
+    <!-- Style -->
+    <style>
+        html, body { height: 100%; margin: 0; }
+        #map { width: 100%; height: 100vh; }
+        .leaflet-control-container .leaflet-bar a {
+            background-color: #fff;
+        }
+        #info-box {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: white;
+            padding: 10px;
+            border-radius: 8px;
+            font-size: 14px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.2);
+            z-index: 9999;
+            width: 260px;
+            max-height: 90vh;
+            overflow-y: auto;
+        }
+        #info-box pre {
+            font-size: 12px;
+            background: #f8f8f8;
+            padding: 6px;
+            border-radius: 5px;
+            overflow-x: auto;
+        }
+    </style>
+</head>
 
-    # -----------------------------
-    # ดึงค่าเฉลี่ยของ band ต่าง ๆ ในพื้นที่
-    # -----------------------------
-    mean_dict = image.reduceRegion(
-        reducer=ee.Reducer.mean(),
-        geometry=polygon,
-        scale=10,
-        maxPixels=1e9
-    ).getInfo()
+<body>
+<div id="map"></div>
+<div id="info-box">
+    <b>📊 ข้อมูลพื้นที่ที่วาด</b><br>
+    <button id="clear-btn">ล้างพื้นที่</button>
+    <hr>
+    <div id="results">ยังไม่มีข้อมูล</div>
+</div>
 
-    try:
-        blue = float(mean_dict.get("B2", 0))
-        green = float(mean_dict.get("B3", 0))
-        red = float(mean_dict.get("B4", 0))
-        nir = float(mean_dict.get("B8", 0))
-    except:
-        return jsonify({"error": "invalid area reflectance values"})
+<script>
+    // -----------------------------
+    // เริ่มต้นแผนที่
+    // -----------------------------
+    const map = L.map('map').setView([13.736, 100.523], 8);
 
-    # -----------------------------
-    # Step 2: MLP → Field Reflectance
-    # -----------------------------
-    X = np.array([[blue, green, red, nir]])
-    X_scaled = scaler_X.transform(X)
-    y_pred_scaled = mlp_model.predict(X_scaled)
-    field_reflectance = scaler_y.inverse_transform(y_pred_scaled)
+    let sentinelLayer, theosLayer;
 
-    # -----------------------------
-    # Step 2.5: REF → Cor Field Reflectance
-    # -----------------------------
-    ref_X_scaled = ref_scaler_X.transform(field_reflectance)
-    ref_y_pred_scaled = ref_model.predict(ref_X_scaled)
-    ref_field_reflectance = ref_scaler_y.inverse_transform(ref_y_pred_scaled)
+    // โหลด tile map จาก backend
+    fetch('/get_map', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            start: "2019-02-01",
+            end: "2019-02-28"
+        })
+    })
+    .then(res => res.json())
+    .then(data => {
+        sentinelLayer = L.tileLayer(data.sentinel_url, { attribution: 'Sentinel-2 SR' });
+        theosLayer = L.tileLayer(data.theos_url, { attribution: 'THEOS-style DN' });
+        sentinelLayer.addTo(map);
 
-    ref_blue, ref_green, ref_red, ref_nir = ref_field_reflectance.ravel()
+        L.control.layers({
+            "Sentinel-2 SR": sentinelLayer,
+            "THEOS-style DN": theosLayer
+        }).addTo(map);
+    });
 
-    # -----------------------------
-    # Step 3: คำนวณดัชนี 5 ตัว
-    # -----------------------------
-    indices = calculate_indices(ref_blue, ref_green, ref_red, ref_nir)
+    // -----------------------------
+    // ตั้งค่าเครื่องมือวาด
+    // -----------------------------
+    const drawnItems = new L.FeatureGroup();
+    map.addLayer(drawnItems);
 
-    # -----------------------------
-    # Step 4: SVR → Predict AGB
-    # -----------------------------
-    idx_vals = np.array([[indices["NDVI"], indices["TNDVI"], indices["SR"], indices["SAVI"], indices["MSAVI2"]]])
-    idx_scaled = svr_scaler_X.transform(idx_vals)
-    agb_scaled = svr_model.predict(idx_scaled)
-    agb = svr_scaler_y.inverse_transform(agb_scaled.reshape(-1, 1)).ravel()[0]
-
-    # -----------------------------
-    # รวมผลลัพธ์
-    # -----------------------------
-    result = {
-        "mean_reflectance": {
-            "Blue": blue,
-            "Green": green,
-            "Red": red,
-            "NIR": nir
+    const drawControl = new L.Control.Draw({
+        position: 'topleft',
+        draw: {
+            polygon: true,
+            rectangle: true,
+            circle: true,
+            polyline: false,
+            marker: false,
+            circlemarker: false
         },
-        "field_reflectance": {
-            "Blue": ref_blue,
-            "Green": ref_green,
-            "Red": ref_red,
-            "NIR": ref_nir
-        },
-        "indices": indices,
-        "AGB_mean": agb
-    }
+        edit: {
+            featureGroup: drawnItems,
+            remove: true
+        }
+    });
+    map.addControl(drawControl);
 
-    return jsonify(result)
+    // -----------------------------
+    // เมื่อผู้ใช้วาดเสร็จ
+    // -----------------------------
+    map.on(L.Draw.Event.CREATED, function (event) {
+        const layer = event.layer;
+        drawnItems.addLayer(layer);
+
+        let geojson = layer.toGeoJSON();
+        let coords;
+
+        // รองรับ circle ด้วย (แปลงเป็น polygon)
+        if (geojson.geometry.type === "Point" && layer.getRadius) {
+            const circle = L.circle(layer.getLatLng(), { radius: layer.getRadius() });
+            geojson = circle.toGeoJSON();
+        }
+
+        if (geojson.geometry.type === "Polygon") {
+            coords = geojson.geometry.coordinates[0];
+        } else {
+            alert("โปรดวาดเป็น Polygon หรือรูปทรงที่ปิดขอบ");
+            return;
+        }
+
+        // ส่งไป backend เพื่อหาค่าเฉลี่ยในพื้นที่
+        fetch('/get_area', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                coords: coords,
+                start: "2019-02-01",
+                end: "2019-02-28"
+            })
+        })
+        .then(res => res.json())
+        .then(data => {
+            console.log("Result:", data);
+            document.getElementById("results").innerHTML = `
+                <b>📍 ผลการคำนวณเฉลี่ย</b><br>
+                <pre>${JSON.stringify(data, null, 2)}</pre>
+            `;
+        })
+        .catch(err => {
+            console.error(err);
+            document.getElementById("results").innerHTML = "<b style='color:red;'>เกิดข้อผิดพลาด</b>";
+        });
+    });
+
+    // -----------------------------
+    // ปุ่มล้างพื้นที่
+    // -----------------------------
+    document.getElementById('clear-btn').onclick = function() {
+        drawnItems.clearLayers();
+        document.getElementById('results').innerHTML = "ยังไม่มีข้อมูล";
+    };
+</script>
+</body>
+</html>
