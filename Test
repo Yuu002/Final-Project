@@ -1,180 +1,110 @@
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <title>Sentinel-2 Viewer</title>
-  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
-  <link rel="stylesheet" href="https://unpkg.com/leaflet-draw/dist/leaflet.draw.css"/>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <style>
-    /* ===== เดิมทั้งหมดเก็บไว้เหมือนเดิม ===== */
-    *{margin:0;padding:0;box-sizing:border-box;}
-    body{font-family:'Inter',sans-serif;background:#0f172a;color:#e2e8f0;overflow:hidden;}
-    #map{height:100vh;width:calc(100% - 420px);float:left;}
-    #sidebar{width:420px;height:100vh;float:right;background:linear-gradient(135deg,#1e293b 0%,#0f172a 100%);
-      overflow-y:auto;box-shadow:-4px 0 24px rgba(0,0,0,0.3);backdrop-filter:blur(10px);}
-    #sidebar::-webkit-scrollbar{width:8px;}
-    #sidebar::-webkit-scrollbar-thumb{background:rgba(96,165,250,0.3);border-radius:4px;}
-    .header{padding:32px 28px;background:linear-gradient(135deg,#3b82f6 0%,#2563eb 100%);}
-    .header h1{font-size:28px;font-weight:700;color:white;margin-bottom:6px;}
-    .section{padding:24px 28px;border-bottom:1px solid rgba(255,255,255,0.06);}
-    .section-title{font-size:16px;font-weight:600;color:#60a5fa;margin-bottom:18px;}
-    label{display:block;margin-bottom:8px;font-size:13px;font-weight:500;color:#94a3b8;text-transform:uppercase;}
-    input[type="date"],input[type="number"],select{width:100%;padding:12px 16px;margin-bottom:16px;background:rgba(255,255,255,0.05);
-      border:1px solid rgba(255,255,255,0.1);border-radius:10px;color:#e2e8f0;font-size:14px;}
-    button{width:100%;padding:14px 24px;background:linear-gradient(135deg,#3b82f6 0%,#2563eb 100%);border:none;border-radius:10px;color:white;font-size:15px;font-weight:600;cursor:pointer;}
-    .data-grid{display:grid;gap:12px;}
-    .data-card{background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:14px 16px;}
-    .data-value.highlight{color:#60a5fa;}
-  </style>
-</head>
-<body>
-  <div id="map"></div>
-  <div id="sidebar">
-    <div class="header">
-      <h1>🛰️ Sentinel-2 Viewer</h1>
-      <p>Earth Observation & Analysis Platform</p>
-    </div>
+# -----------------------------
+# Endpoint: โหมดพื้นที่ (Polygon) - รองรับทั้ง 'coords' และ GeoJSON 'geometry'
+# -----------------------------
+@app.route('/get_area', methods=['POST'])
+def get_area():
+    data = request.get_json(force=True)
+    start = data.get('start')
+    end = data.get('end')
 
-    <!-- Mode Selector -->
-    <div class="section">
-      <div class="section-title">Mode Selection</div>
-      <label>Select Analysis Mode</label>
-      <select id="mode">
-        <option value="point">📍 Analyze Point</option>
-        <option value="polygon">🗺️ Analyze Polygon</option>
-      </select>
-    </div>
+    # อ่านพิกัดจากสองรูปแบบ: 'coords' (เดิม) หรือ 'geometry' (GeoJSON จาก leaflet.draw)
+    coords = None
+    if 'coords' in data:
+        coords = data['coords']
+    elif 'geometry' in data:
+        geom = data['geometry']
+        # GeoJSON polygon coordinates structure: [ [ [lon, lat], ... ] , ... ]
+        coords = geom.get('coordinates')
+    else:
+        return jsonify({'error': 'No coords or geometry provided.'}), 400
 
-    <div class="section">
-      <div class="section-title">Date Range</div>
-      <label>Start Date</label>
-      <input type="date" id="start" value="2020-01-01">
-      <label>End Date</label>
-      <input type="date" id="end" value="2020-01-15">
-      <button id="loadMap">🔍 Load Satellite Imagery</button>
-    </div>
+    # สร้าง ee.Geometry.Polygon ให้ถูกต้องกับโครงสร้างที่ได้รับ
+    try:
+        # หาก coords เป็น list ของ points แบบ flat (เช่น [[lon,lat],...]) ให้ห่อเป็น ring เดียว
+        if isinstance(coords, list) and len(coords) > 0 and isinstance(coords[0][0], (int, float)):
+            polygon = ee.Geometry.Polygon([coords])
+        else:
+            # กรณี coords มาเป็น list ของ rings หรือเป็น GeoJSON polygon coordinates
+            polygon = ee.Geometry.Polygon(coords)
+    except Exception as e:
+        return jsonify({'error': f'Invalid geometry format: {str(e)}'}), 400
 
-    <!-- Point Section -->
-    <div id="pointSection" class="section">
-      <div class="section-title">Location Selection</div>
-      <label>Latitude</label>
-      <input type="number" id="lat" step="0.0001" placeholder="e.g., 19.2000">
-      <label>Longitude</label>
-      <input type="number" id="lon" step="0.0001" placeholder="e.g., 100.1000">
-      <button id="getPixel">📍 Analyze Point</button>
-    </div>
+    # โหลด Sentinel-2 SR และกรองวันที่ + เมฆ
+    collection = (
+        ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
+        .filterDate(start, end)
+        .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
+        .map(mask_s2_clouds_reflectance)
+    )
+    image = collection.mean()
 
-    <!-- Data Result Sections (เหมือนเดิมทั้งหมด) -->
-    <div class="section">
-      <div class="section-title">Selected Location</div>
-      <div class="data-grid">
-        <div>Lat: <span id="coordLat">-</span></div>
-        <div>Lon: <span id="coordLon">-</span></div>
-      </div>
-    </div>
+    # ให้ GEE เฉลี่ยค่าทุก pixel ใน polygon โดยตรง (ไม่จำกัดขนาด)
+    try:
+        result = image.reduceRegion(
+            reducer=ee.Reducer.mean(),
+            geometry=polygon,
+            scale=10,
+            maxPixels=1e13,
+            tileScale=4,
+            bestEffort=True
+        ).getInfo()
+    except Exception as e:
+        return jsonify({'error': f'GEE reduceRegion error: {str(e)}'}), 500
 
-    <div class="section">
-      <div class="section-title">Reflectance & Indices</div>
-      <div class="data-grid">
-        <div>NDVI: <span id="ndvi">-</span></div>
-        <div>AGB: <span id="agb">-</span></div>
-      </div>
-    </div>
-  </div>
+    blue = result.get('B2')
+    green = result.get('B3')
+    red = result.get('B4')
+    nir = result.get('B8')
 
-  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
-  <script src="https://unpkg.com/leaflet-draw/dist/leaflet.draw.js"></script>
-  <script>
-    var osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png');
-    var map = L.map('map', {center: [19.2, 100.1], zoom: 10, layers: [osm]});
-    var drawnItems = new L.FeatureGroup();
-    map.addLayer(drawnItems);
+    if None in (blue, green, red, nir):
+        return jsonify({'error': 'No valid pixel values found in this area.'}), 400
 
-    var drawControl = new L.Control.Draw({
-      draw: {
-        polygon: true,
-        rectangle: true,
-        circle: false,
-        marker: false,
-        polyline: false,
-      },
-      edit: { featureGroup: drawnItems }
-    });
+    # ---- Pipeline model ----
+    X = np.array([[blue, green, red, nir]])
+    X_scaled = scaler_X.transform(X)
+    y_pred_scaled = mlp_model.predict(X_scaled)
+    field_reflectance = scaler_y.inverse_transform(y_pred_scaled)
 
-    var currentMode = "point";
-    var s2layer = {};
-    var marker;
+    ref_X_scaled = ref_scaler_X.transform(field_reflectance)
+    ref_y_pred_scaled = ref_model.predict(ref_X_scaled)
+    ref_field_reflectance = ref_scaler_y.inverse_transform(ref_y_pred_scaled)
+    ref_blue, ref_green, ref_red, ref_nir = ref_field_reflectance.ravel()
 
-    document.getElementById("mode").addEventListener("change", function() {
-      currentMode = this.value;
-      if (currentMode === "polygon") {
-        map.addControl(drawControl);
-        document.getElementById("pointSection").style.display = "none";
-      } else {
-        map.removeControl(drawControl);
-        document.getElementById("pointSection").style.display = "block";
-      }
-    });
+    indices = calculate_indices(ref_blue, ref_green, ref_red, ref_nir)
 
-    // Load map layers
-    document.getElementById('loadMap').onclick = async function() {
-      let start = document.getElementById('start').value;
-      let end = document.getElementById('end').value;
-      let resp = await fetch('/get_map', {
-        method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({start, end})
-      });
-      let data = await resp.json();
-      if(s2layer.sentinel) map.removeLayer(s2layer.sentinel);
-      let sentinelLayer = L.tileLayer(data.sentinel_url);
-      sentinelLayer.addTo(map);
-      s2layer = { sentinel: sentinelLayer };
-    };
+    idx_vals = np.array([[indices["NDVI"], indices["TNDVI"], indices["SR"], indices["SAVI"], indices["MSAVI2"]]])
+    idx_scaled = svr_scaler_X.transform(idx_vals)
+    agb_scaled = svr_model.predict(idx_scaled)
+    agb = svr_scaler_y.inverse_transform(agb_scaled.reshape(-1, 1)).ravel()[0]
 
-    async function getPixelData(lat, lon, start, end){
-      let resp = await fetch('/get_pixel', {
-        method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({lat, lon, start, end})
-      });
-      let res = await resp.json();
-      document.getElementById('coordLat').innerText = lat.toFixed(4);
-      document.getElementById('coordLon').innerText = lon.toFixed(4);
-      document.getElementById('ndvi').innerText = (res.indices?.NDVI ?? "-").toFixed(3);
-      document.getElementById('agb').innerText = (res.AGB ?? "-").toFixed(3);
-    }
+    # ขนาดพื้นที่
+    try:
+        area_sqm = polygon.area().getInfo()
+    except Exception:
+        area_sqm = None
 
-    document.getElementById('getPixel').onclick = async function() {
-      let lat = parseFloat(document.getElementById('lat').value);
-      let lon = parseFloat(document.getElementById('lon').value);
-      let start = document.getElementById('start').value;
-      let end = document.getElementById('end').value;
-      await getPixelData(lat, lon, start, end);
-    };
+    area_ha = (area_sqm / 10000) if area_sqm is not None else None
+    area_rai = (area_sqm / 1600) if area_sqm is not None else None
 
-    // Polygon draw handler
-    map.on(L.Draw.Event.CREATED, async function (e) {
-      if (currentMode !== "polygon") return;
-      drawnItems.clearLayers();
-      let layer = e.layer;
-      drawnItems.addLayer(layer);
-      let geojson = layer.toGeoJSON().geometry;
-
-      let start = document.getElementById('start').value;
-      let end = document.getElementById('end').value;
-
-      let resp = await fetch('/get_area', {
-        method: 'POST',
-        headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({geometry: geojson, start, end})
-      });
-      let result = await resp.json();
-
-      document.getElementById('coordLat').innerText = "Polygon";
-      document.getElementById('coordLon').innerText = "-";
-      document.getElementById('ndvi').innerText = (result.indices?.NDVI ?? "-").toFixed(3);
-      document.getElementById('agb').innerText = (result.AGB ?? "-").toFixed(3);
-    });
-  </script>
-</body>
-</html>
+    # ส่งผลลัพธ์ — ใช้คีย์เหมือน /get_pixel (AGB) เพื่อให้ frontend ไม่ต้องแก้
+    return jsonify({
+        "mean_reflectance": {
+            "Blue": blue,
+            "Green": green,
+            "Red": red,
+            "NIR": nir
+        },
+        "field_reflectance": {
+            "Blue": ref_blue,
+            "Green": ref_green,
+            "Red": ref_red,
+            "NIR": ref_nir
+        },
+        "indices": indices,
+        "AGB": agb,
+        "area": {
+            "sqm": area_sqm,
+            "hectare": area_ha,
+            "rai": area_rai
+        }
+    })
