@@ -1,1 +1,8 @@
-in your command line, or ee.Authenticate() in Python, and then retry.
+import ee
+import os
+import json
+
+# โหลด service account key จาก environment variable
+service_account_info = json.loads(os.environ.get("EE_PRIVATE_KEY"))
+credentials = ee.ServiceAccountCredentials(os.environ.get("EE_ACCOUNT"), service_account_info)
+ee.Initialize(credentials)
