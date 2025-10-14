@@ -1,110 +1,232 @@
-# -----------------------------
-# Endpoint: โหมดพื้นที่ (Polygon) - รองรับทั้ง 'coords' และ GeoJSON 'geometry'
-# -----------------------------
-@app.route('/get_area', methods=['POST'])
-def get_area():
-    data = request.get_json(force=True)
-    start = data.get('start')
-    end = data.get('end')
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Sentinel-2 Viewer</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet-draw/dist/leaflet.draw.css"/>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'Inter', sans-serif; background: #0f172a; color: #e2e8f0; overflow: hidden; }
 
-    # อ่านพิกัดจากสองรูปแบบ: 'coords' (เดิม) หรือ 'geometry' (GeoJSON จาก leaflet.draw)
-    coords = None
-    if 'coords' in data:
-        coords = data['coords']
-    elif 'geometry' in data:
-        geom = data['geometry']
-        # GeoJSON polygon coordinates structure: [ [ [lon, lat], ... ] , ... ]
-        coords = geom.get('coordinates')
-    else:
-        return jsonify({'error': 'No coords or geometry provided.'}), 400
+    #map { height: 100vh; width: calc(100% - 420px); float: left; }
+    #sidebar { width: 420px; height: 100vh; float: right; background: linear-gradient(135deg, #1e293b, #0f172a); overflow-y: auto; }
 
-    # สร้าง ee.Geometry.Polygon ให้ถูกต้องกับโครงสร้างที่ได้รับ
-    try:
-        # หาก coords เป็น list ของ points แบบ flat (เช่น [[lon,lat],...]) ให้ห่อเป็น ring เดียว
-        if isinstance(coords, list) and len(coords) > 0 and isinstance(coords[0][0], (int, float)):
-            polygon = ee.Geometry.Polygon([coords])
-        else:
-            # กรณี coords มาเป็น list ของ rings หรือเป็น GeoJSON polygon coordinates
-            polygon = ee.Geometry.Polygon(coords)
-    except Exception as e:
-        return jsonify({'error': f'Invalid geometry format: {str(e)}'}), 400
+    .header { padding: 32px 28px; background: linear-gradient(135deg, #3b82f6, #2563eb); }
+    .header h1 { font-size: 28px; color: white; margin-bottom: 6px; font-weight: 700; }
+    .header p { color: rgba(255,255,255,0.8); font-size: 14px; }
 
-    # โหลด Sentinel-2 SR และกรองวันที่ + เมฆ
-    collection = (
-        ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
-        .filterDate(start, end)
-        .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
-        .map(mask_s2_clouds_reflectance)
-    )
-    image = collection.mean()
+    .section { padding: 24px 28px; border-bottom: 1px solid rgba(255,255,255,0.08); }
+    .section-title { font-size: 16px; font-weight: 600; color: #60a5fa; margin-bottom: 16px; }
 
-    # ให้ GEE เฉลี่ยค่าทุก pixel ใน polygon โดยตรง (ไม่จำกัดขนาด)
-    try:
-        result = image.reduceRegion(
-            reducer=ee.Reducer.mean(),
-            geometry=polygon,
-            scale=10,
-            maxPixels=1e13,
-            tileScale=4,
-            bestEffort=True
-        ).getInfo()
-    except Exception as e:
-        return jsonify({'error': f'GEE reduceRegion error: {str(e)}'}), 500
+    input[type="date"], input[type="number"] {
+      width: 100%; padding: 10px; margin-bottom: 12px; border-radius: 8px;
+      background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);
+      color: #e2e8f0; font-size: 14px;
+    }
+    button {
+      width: 100%; padding: 12px; border-radius: 8px; background: #2563eb;
+      color: white; border: none; cursor: pointer; font-weight: 600;
+    }
+    button:hover { background: #1d4ed8; }
 
-    blue = result.get('B2')
-    green = result.get('B3')
-    red = result.get('B4')
-    nir = result.get('B8')
+    .data-grid { display: grid; gap: 10px; }
+    .data-card {
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 8px;
+      padding: 10px 14px;
+    }
+    .data-label { font-size: 12px; color: #94a3b8; margin-bottom: 4px; }
+    .data-value { font-size: 18px; font-weight: 600; }
 
-    if None in (blue, green, red, nir):
-        return jsonify({'error': 'No valid pixel values found in this area.'}), 400
+    #modeSelectBox {
+      position: absolute; top: 10px; left: 10px; z-index: 1000;
+      background: white; color: black; padding: 10px 15px; border-radius: 8px;
+      font-size: 14px; line-height: 1.6;
+    }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
 
-    # ---- Pipeline model ----
-    X = np.array([[blue, green, red, nir]])
-    X_scaled = scaler_X.transform(X)
-    y_pred_scaled = mlp_model.predict(X_scaled)
-    field_reflectance = scaler_y.inverse_transform(y_pred_scaled)
+  <div id="sidebar">
+    <div class="header">
+      <h1>🛰️ Sentinel-2 Viewer</h1>
+      <p>Earth Observation & Analysis Platform</p>
+    </div>
 
-    ref_X_scaled = ref_scaler_X.transform(field_reflectance)
-    ref_y_pred_scaled = ref_model.predict(ref_X_scaled)
-    ref_field_reflectance = ref_scaler_y.inverse_transform(ref_y_pred_scaled)
-    ref_blue, ref_green, ref_red, ref_nir = ref_field_reflectance.ravel()
+    <div class="section">
+      <div class="section-title">Date Range</div>
+      <label>Start Date</label>
+      <input type="date" id="start" value="2020-01-01">
+      <label>End Date</label>
+      <input type="date" id="end" value="2020-01-15">
+      <button id="loadMap">🔍 Load Satellite Imagery</button>
+    </div>
 
-    indices = calculate_indices(ref_blue, ref_green, ref_red, ref_nir)
+    <div class="section" id="locationSection">
+      <div class="section-title">Location Selection</div>
+      <label>Latitude</label>
+      <input type="number" id="lat" step="0.0001" placeholder="e.g., 19.2000">
+      <label>Longitude</label>
+      <input type="number" id="lon" step="0.0001" placeholder="e.g., 100.1000">
+      <button id="getPixel">📍 Analyze Point</button>
+    </div>
 
-    idx_vals = np.array([[indices["NDVI"], indices["TNDVI"], indices["SR"], indices["SAVI"], indices["MSAVI2"]]])
-    idx_scaled = svr_scaler_X.transform(idx_vals)
-    agb_scaled = svr_model.predict(idx_scaled)
-    agb = svr_scaler_y.inverse_transform(agb_scaled.reshape(-1, 1)).ravel()[0]
+    <div class="section" id="coordSection">
+      <div class="section-title">Selected Location</div>
+      <div class="data-grid">
+        <div class="data-card"><div class="data-label">Latitude</div><div class="data-value" id="coordLat">-</div></div>
+        <div class="data-card"><div class="data-label">Longitude</div><div class="data-value" id="coordLon">-</div></div>
+      </div>
+    </div>
 
-    # ขนาดพื้นที่
-    try:
-        area_sqm = polygon.area().getInfo()
-    except Exception:
-        area_sqm = None
+    <div class="section">
+      <div class="section-title">Sentinel-2 Reflectance</div>
+      <div class="data-grid">
+        <div class="data-card"><div class="data-label">🔴 Red (B4)</div><div class="data-value" id="red">-</div></div>
+        <div class="data-card"><div class="data-label">🟢 Green (B3)</div><div class="data-value" id="green">-</div></div>
+        <div class="data-card"><div class="data-label">🔵 Blue (B2)</div><div class="data-value" id="blue">-</div></div>
+        <div class="data-card"><div class="data-label">⚫ NIR (B8)</div><div class="data-value" id="nir">-</div></div>
+      </div>
+    </div>
 
-    area_ha = (area_sqm / 10000) if area_sqm is not None else None
-    area_rai = (area_sqm / 1600) if area_sqm is not None else None
+    <div class="section">
+      <div class="section-title">Vegetation Indices</div>
+      <div class="data-grid">
+        <div class="data-card"><div class="data-label">NDVI</div><div class="data-value" id="ndvi">-</div></div>
+        <div class="data-card"><div class="data-label">TNDVI</div><div class="data-value" id="tndvi">-</div></div>
+        <div class="data-card"><div class="data-label">SR</div><div class="data-value" id="sr">-</div></div>
+        <div class="data-card"><div class="data-label">SAVI</div><div class="data-value" id="savi">-</div></div>
+        <div class="data-card"><div class="data-label">MSAVI2</div><div class="data-value" id="msavi2">-</div></div>
+      </div>
+    </div>
 
-    # ส่งผลลัพธ์ — ใช้คีย์เหมือน /get_pixel (AGB) เพื่อให้ frontend ไม่ต้องแก้
-    return jsonify({
-        "mean_reflectance": {
-            "Blue": blue,
-            "Green": green,
-            "Red": red,
-            "NIR": nir
-        },
-        "field_reflectance": {
-            "Blue": ref_blue,
-            "Green": ref_green,
-            "Red": ref_red,
-            "NIR": ref_nir
-        },
-        "indices": indices,
-        "AGB": agb,
-        "area": {
-            "sqm": area_sqm,
-            "hectare": area_ha,
-            "rai": area_rai
-        }
-    })
+    <div class="section">
+      <div class="section-title">Biomass Estimation</div>
+      <div class="data-card">
+        <div class="data-label">Above Ground Biomass (AGB)</div>
+        <div class="data-value" id="agb">-</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Mode selector -->
+  <div id="modeSelectBox">
+    <strong>Mode:</strong><br>
+    <label><input type="radio" name="mode" value="point" checked> Analyze Point (10×12)</label><br>
+    <label><input type="radio" name="mode" value="area"> Analyze Area</label>
+  </div>
+
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet-draw/dist/leaflet.draw.js"></script>
+
+  <script>
+    const map = L.map("map").setView([19.2, 100.1], 10);
+    const osm = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png").addTo(map);
+    let marker, drawnItems = new L.FeatureGroup().addTo(map);
+
+    // Draw controls
+    const drawControl = new L.Control.Draw({
+      edit: { featureGroup: drawnItems },
+      draw: { polygon: true, rectangle: true, circle: false, polyline: false, marker: false, circlemarker: false }
+    }).addTo(map);
+
+    // Switch mode visibility
+    function getMode() {
+      return document.querySelector('input[name="mode"]:checked').value;
+    }
+
+    function toggleSections() {
+      const mode = getMode();
+      const locSec = document.getElementById("locationSection");
+      const coordSec = document.getElementById("coordSection");
+      if (mode === "area") {
+        locSec.style.display = "none";
+        coordSec.style.display = "none";
+      } else {
+        locSec.style.display = "block";
+        coordSec.style.display = "block";
+      }
+    }
+
+    document.querySelectorAll('input[name="mode"]').forEach(el => el.addEventListener('change', toggleSections));
+    toggleSections();
+
+    // Format helper
+    function fmt(v) { return (v == null || isNaN(v)) ? "-" : Number(v).toFixed(3); }
+
+    async function showPixel(lat, lon, start, end) {
+      const res = await fetch("/get_pixel", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ lat, lon, start, end })
+      });
+      const px = await res.json();
+      document.getElementById("coordLat").innerText = lat.toFixed(6);
+      document.getElementById("coordLon").innerText = lon.toFixed(6);
+      document.getElementById("red").innerText = fmt(px.B4);
+      document.getElementById("green").innerText = fmt(px.B3);
+      document.getElementById("blue").innerText = fmt(px.B2);
+      document.getElementById("nir").innerText = fmt(px.B8);
+      if (px.indices) {
+        document.getElementById("ndvi").innerText = fmt(px.indices.NDVI);
+        document.getElementById("tndvi").innerText = fmt(px.indices.TNDVI);
+        document.getElementById("sr").innerText = fmt(px.indices.SR);
+        document.getElementById("savi").innerText = fmt(px.indices.SAVI);
+        document.getElementById("msavi2").innerText = fmt(px.indices.MSAVI2);
+      }
+      document.getElementById("agb").innerText = fmt(px.AGB);
+    }
+
+    async function showArea(geojson, start, end) {
+      const res = await fetch("/get_area", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ geometry: geojson.geometry, start, end })
+      });
+      const data = await res.json();
+      document.getElementById("red").innerText = fmt(data.B4);
+      document.getElementById("green").innerText = fmt(data.B3);
+      document.getElementById("blue").innerText = fmt(data.B2);
+      document.getElementById("nir").innerText = fmt(data.B8);
+      if (data.indices) {
+        document.getElementById("ndvi").innerText = fmt(data.indices.NDVI);
+        document.getElementById("tndvi").innerText = fmt(data.indices.TNDVI);
+        document.getElementById("sr").innerText = fmt(data.indices.SR);
+        document.getElementById("savi").innerText = fmt(data.indices.SAVI);
+        document.getElementById("msavi2").innerText = fmt(data.indices.MSAVI2);
+      }
+      document.getElementById("agb").innerText = fmt(data.AGB);
+    }
+
+    // Click event for point
+    map.on("click", async (e) => {
+      if (getMode() !== "point") return;
+      const lat = e.latlng.lat, lon = e.latlng.lng;
+      document.getElementById("lat").value = lat.toFixed(6);
+      document.getElementById("lon").value = lon.toFixed(6);
+      if (marker) map.removeLayer(marker);
+      marker = L.marker([lat, lon]).addTo(map);
+      await showPixel(lat, lon, document.getElementById("start").value, document.getElementById("end").value);
+    });
+
+    // Draw polygon event
+    map.on(L.Draw.Event.CREATED, async function (e) {
+      if (getMode() !== "area") return;
+      drawnItems.clearLayers();
+      drawnItems.addLayer(e.layer);
+      await showArea(e.layer.toGeoJSON(), document.getElementById("start").value, document.getElementById("end").value);
+    });
+
+    document.getElementById("getPixel").onclick = async function() {
+      const lat = parseFloat(document.getElementById("lat").value);
+      const lon = parseFloat(document.getElementById("lon").value);
+      if (isNaN(lat) || isNaN(lon)) { alert("Please enter valid coordinates!"); return; }
+      await showPixel(lat, lon, document.getElementById("start").value, document.getElementById("end").value);
+    };
+  </script>
+</body>
+</html>
