@@ -1,3 +1,71 @@
+# -----------------------------
+# Endpoint: โหมด 1 จุด (Pixel)
+# -----------------------------
+@app.route('/get_pixel', methods=['POST'])
+def get_pixel():
+    lat = float(request.json['lat'])
+    lon = float(request.json['lon'])
+    start = request.json['start']
+    end = request.json['end']
+
+    point = ee.Geometry.Point([lon, lat])
+
+    collection = (
+        ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
+        .filterDate(start, end)
+        .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
+        .map(mask_s2_clouds_reflectance)
+    )
+
+    image = collection.mean()
+
+    bands = image.reduceRegion(
+        reducer=ee.Reducer.first(),
+        geometry=point,
+        scale=10
+    )
+
+    pixel_data = bands.getInfo()
+
+    try:
+        blue = float(pixel_data.get("B2", 0))
+        green = float(pixel_data.get("B3", 0))
+        red = float(pixel_data.get("B4", 0))
+        nir = float(pixel_data.get("B8", 0))
+    except:
+        return jsonify({"error": "invalid pixel values"})
+
+    # ---- Pipeline model ----
+    X = np.array([[blue, green, red, nir]])
+    X_scaled = scaler_X.transform(X)
+    y_pred_scaled = mlp_model.predict(X_scaled)
+    field_reflectance = scaler_y.inverse_transform(y_pred_scaled)
+
+    ref_X_scaled = ref_scaler_X.transform(field_reflectance)
+    ref_y_pred_scaled = ref_model.predict(ref_X_scaled)
+    ref_field_reflectance = ref_scaler_y.inverse_transform(ref_y_pred_scaled)
+    ref_blue, ref_green, ref_red, ref_nir = ref_field_reflectance.ravel()
+
+    indices = calculate_indices(ref_blue, ref_green, ref_red, ref_nir)
+
+    idx_vals = np.array([[indices["NDVI"], indices["TNDVI"], indices["SR"], indices["SAVI"], indices["MSAVI2"]]])
+    idx_scaled = svr_scaler_X.transform(idx_vals)
+    agb_scaled = svr_model.predict(idx_scaled)
+    agb = svr_scaler_y.inverse_transform(agb_scaled.reshape(-1, 1)).ravel()[0]
+
+    pixel_data.update({
+        "field_reflectance": {
+            "Blue": ref_blue,
+            "Green": ref_green,
+            "Red": ref_red,
+            "NIR": ref_nir
+        },
+        "indices": indices,
+        "AGB": agb
+    })
+
+    return jsonify(pixel_data)
+---
 // Sentinel-2 SR true surface reflectance (0–1)
 // Click anywhere on the map to view reflectance values
 
@@ -136,3 +204,4 @@ var panel = ui.Panel([
 ]);
 panel.style().set({position: 'bottom-right', padding: '8px'});
 Map.add(panel);
+
