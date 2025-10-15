@@ -1,19 +1,22 @@
-EE_ACCOUNT=admin-164@map-web-473508.iam.gserviceaccount.com
-EE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDPey6ZcInJVYA5\ng3ZjrzXUEhgCdBWf/…\n-----END PRIVATE KEY-----\n"
+// จุดหรือ polygon ของพื้นที่ที่ต้องการ
+var area = ee.Geometry.Polygon([
+  [[100.123, 13.765], [100.125, 13.765], [100.125, 13.763], [100.123, 13.763]]
+]);
 
-import ee
-import os
-import json
+// ดึงข้อมูล Sentinel-2
+var s2 = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
+  .filterBounds(area)
+  .filterDate('2025-01-01', '2025-01-31')
+  .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 10))
+  .median()
+  .select(['B2', 'B3', 'B4', 'B8']);
 
-# โหลด Service Account credentials จาก environment
-service_account = os.environ.get("EE_ACCOUNT")
-private_key = os.environ.get("EE_PRIVATE_KEY")
+// หาค่าเฉลี่ยของแต่ละแบนด์ในพื้นที่
+var meanDict = s2.reduceRegion({
+  reducer: ee.Reducer.mean(),
+  geometry: area,
+  scale: 10, // เพราะแบนด์พวกนี้มี resolution 10 m
+  bestEffort: true
+});
 
-credentials_dict = {
-    "type": "service_account",
-    "client_email": service_account,
-    "private_key": private_key,
-}
-
-credentials = ee.ServiceAccountCredentials(service_account, private_key)
-ee.Initialize(credentials)
+print('ค่าเฉลี่ยการสะท้อนแสงแต่ละแบนด์ (×10000):', meanDict);
