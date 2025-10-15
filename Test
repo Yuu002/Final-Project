@@ -1,23 +1,23 @@
 def calculate_indices(blue, green, red, nir):
-    """คำนวณดัชนีพืชพรรณหลัก 5 ค่า (ตามสูตรที่กำหนด ใช้ L, red, nir)"""
+    """คำนวณดัชนีพืชพรรณหลัก 5 ค่า (สูตรใหม่: H2=nir, G2=red, L=0.5)"""
     try:
-        L = 0.5  # ค่าคงที่ตามที่กำหนด
+        L = 0.5  # ค่าคงที่ตามสูตร
 
-        # NDVI = (red - nir) / (red + nir)
-        ndvi = (red - nir) / (red + nir) if (red + nir) != 0 else 0
+        # NDVI = (nir - red) / (nir + red)
+        ndvi = (nir - red) / (nir + red) if (nir + red) != 0 else 0
 
-        # TNDVI = SQRT(((red - nir) / (red + nir)) + L)
-        tndvi = (((red - nir) / (red + nir)) + L) ** 0.5 if (red + nir) != 0 else 0
+        # TNDVI = SQRT(((nir - red) / (nir + red)) + L)
+        tndvi = (((nir - red) / (nir + red)) + L) ** 0.5 if (nir + red) != 0 else 0
 
-        # SR = red / nir
-        sr = red / nir if nir != 0 else 0
+        # SR = nir / red
+        sr = nir / red if red != 0 else 0
 
-        # SAVI = ((1 + L) * (red - nir)) / (red + nir + L)
-        savi = ((1 + L) * (red - nir)) / (red + nir + L) if (red + nir + L) != 0 else 0
+        # SAVI = ((1 + L) * (nir - red)) / (nir + red + L)
+        savi = ((1 + L) * (nir - red)) / (nir + red + L) if (nir + red + L) != 0 else 0
 
-        # MSAVI2 = ((2 * red + 1) - SQRT((2 * red + 1)^2 - 8 * (red - nir))) / 2
-        inner = (2 * red + 1) ** 2 - 8 * (red - nir)
-        msavi2 = ((2 * red + 1) - (inner ** 0.5)) / 2 if inner >= 0 else 0
+        # MSAVI2 = ((2 * nir + 1) - SQRT((2 * nir + 1)^2 - 8 * (nir - red))) / 2
+        inner = (2 * nir + 1) ** 2 - 8 * (nir - red)
+        msavi2 = ((2 * nir + 1) - (inner ** 0.5)) / 2 if inner >= 0 else 0
 
     except Exception:
         ndvi, tndvi, sr, savi, msavi2 = 0, 0, 0, 0, 0
