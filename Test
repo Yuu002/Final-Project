@@ -1,66 +1,172 @@
-// === Sample 1 pixel on map (Map click) ===
-// ใช้: COPERNICUS/S2_SR_HARMONIZED
-// วิธีใช้: run script แล้วคลิกที่จุดบนแผนที่ ผลลัพธ์จะแสดงใน UI panel ด้านขวา
-
-// เลือกภาพ (ตัวอย่าง: ภาพที่ไม่มีเมฆมากสุดในช่วงที่ต้องการ)
+// Compute mean over drawn polygons, return band means as 0-100 percent
 var start = '2019-06-01';
 var end = '2019-07-31';
+
 var s2 = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
           .filterDate(start, end)
-          .filterBounds(Map.getCenter()) // ปรับถ้าต้องการพื้นที่เฉพาะ
+          .filterBounds(Map.getCenter())
           .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 30))
-          .sort('CLOUDY_PIXEL_PERCENTAGE')
-          ;
+          .sort('CLOUDY_PIXEL_PERCENTAGE');
 
-// เอาภาพแรก (ประกอบการสาธิต)
 var image = ee.Image(s2.first());
 if (!image) {
-  print('No image found for given filters. ปรับช่วงวันที่หรือเงื่อนไข cloud.');
+  print('No image found for given filters.');
 } else {
-  // แสดงภาพ (true color)
   Map.addLayer(image, {bands: ['B4','B3','B2'], min: 0, max: 3000}, 'S2 true color');
   Map.centerObject(image, 10);
 }
 
-// UI panel สำหรับแสดงผล
-var resultPanel = ui.Panel({
-  style: {position: 'bottom-right', padding: '8px'}
+// เปิด Drawing tools
+var drawingTools = Map.drawingTools();
+drawingTools.setShown(true);
+drawingTools.layers().forEach(function(l) { drawingTools.layers().remove(l); });
+drawingTools.setShape('polygon');
+
+// UI
+var computeBtn = ui.Button('Compute mean of drawn shapes (0-100 %)', function() {
+  var layers = drawingTools.layers();
+  var features = [];
+  for (var i = 0; i < layers.length(); i++) {
+    var layer = layers.get(i);
+    var geom = layer.getEeObject();
+    if (geom) features.push(ee.Feature(geom));
+  }
+  if (features.length === 0) {
+    ui.alert('No shapes drawn', 'โปรดวาด polygon อย่างน้อย 1 รูป', 'OK');
+    return;
+  }
+
+  var fc = ee.FeatureCollection(features);
+  var unionGeom = fc.geometry();
+  // แบนด์ที่ต้องการคำนวณ
+  var bands = ['B2','B3','B4','B8'];
+  var selected = image.select(bands);
+
+  // reduceRegion คืนค่า mean ของ DN -> เราจะแปลงเป็น percent หลังจากได้ค่า mean DN
+  var meanDN = selected.reduceRegion({
+    reducer: ee.Reducer.mean(),
+    geometry: unionGeom,
+    scale: 10,
+    maxPixels: 1e13
+  });
+
+  meanDN.evaluate(function(res) {
+    if (!res) {
+      ui.alert('No result', 'ไม่สามารถคำนวณได้ — ตรวจสอบว่า geometry อยู่ในภาพหรือไม่', 'OK');
+      return;
+    }
+    var lines = ['Mean values for drawn area (0-100 %):'];
+    // แปลง DN mean ให้เป็น percent => DN_mean * 0.01
+    bands.forEach(function(b) {
+      var dn = res[b];
+      if (dn === null || dn === undefined) lines.push(b + ' : no data');
+      else lines.push(b + ' : ' + (dn * 0.01).toFixed(3) + ' %');
+    });
+
+    // คำนวณ NDVI จาก mean DN: NDVI = (NIR - RED) / (NIR + RED)
+    var dnN = res['B8'];
+    var dnR = res['B4'];
+    if ((dnN === null) || (dnR === null)) {
+      lines.push('NDVI% : no data');
+    } else {
+      // แปลงเป็น reflectance (0-1) ก่อนคำนวณ NDVI
+      var nir = dnN * 0.0001; // dn * (1/10000)
+      var red = dnR * 0.0001;
+      var ndvi = (nir - red) / (nir + red);
+      var ndvi_pct = ndvi * 100.0;
+      lines.push('NDVI mean : ' + ndvi.toFixed(4) + '  (' + ndvi_pct.toFixed(2) + ' %)');
+    }
+
+    resultLabel.setValue(lines.join('\n'));
+  });
 });
-resultPanel.add(ui.Label('Click on the map to sample 1 pixel (Sentinel-2 SR).'));
+
+var clearBtn = ui.Button('Clear shapes', function() {
+  var layers = drawingTools.layers();
+  for (var i = layers.length() - 1; i >= 0; i--) drawingTools.layers().remove(layers.get(i));
+  resultLabel.setValue('Shapes cleared.');
+});
+
+var resultLabel = ui.Label('ผลลัพธ์แสดงที่นี่');
+var panel = ui.Panel([ui.Label('วาด polygon แล้วกดคำนวณ — ผลเป็น 0-100 %'), computeBtn, clearBtn, resultLabel]);
+panel.style().set({position: 'bottom-right', padding: '8px'});
+Map.add(panel);
+---
+
+// Sample 1 pixel and show bands as 0-100 percent (COPERNICUS/S2_SR_HARMONIZED)
+
+var start = '2019-06-01';
+var end = '2019-07-31';
+
+var s2 = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
+          .filterDate(start, end)
+          .filterBounds(Map.getCenter())
+          .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 30))
+          .sort('CLOUDY_PIXEL_PERCENTAGE');
+
+var image = ee.Image(s2.first());
+if (!image) {
+  print('No image found for given filters.');
+} else {
+  // แสดงภาพด้วยพารามิเตอร์เดิม (ค่าที่แสดงบนแผนที่ยังใช้ DN range เดิม)
+  Map.addLayer(image, {bands: ['B4','B3','B2'], min: 0, max: 3000}, 'S2 true color');
+  Map.centerObject(image, 10);
+}
+
+var resultPanel = ui.Panel({style: {position: 'bottom-right', padding: '8px'}});
+resultPanel.add(ui.Label('Click map to sample (values returned as 0-100 %)'));
 var outputLabel = ui.Label('');
 resultPanel.add(outputLabel);
 Map.add(resultPanel);
 
-// ฟังก์ชันเมื่อคลิกแผนที่
 Map.onClick(function(coords) {
   if (!image) {
     outputLabel.setValue('No image loaded.');
     return;
   }
   var pt = ee.Geometry.Point([coords.lon, coords.lat]);
-  // เลือกแบนด์ที่ต้องการ (เปลี่ยนชื่อหากต้องการ)
-  var bands = image.bandNames();
-  // reduceRegion เพื่อนำค่าพิกเซลที่ตำแหน่งนั้น (scale = 10m)
-  var reduction = image.reduceRegion({
-    reducer: ee.Reducer.first(), // pixel เดียว -> ใช้ first() หรือ mean()
+  // เลือกเฉพาะแบนด์ที่ต้องการแสดง (เปลี่ยนได้)
+  var bandsToSample = ['B2','B3','B4','B8']; // blue, green, red, NIR
+
+  // reduceRegion ดึงค่า DN เดิม
+  var dnValues = image.select(bandsToSample).reduceRegion({
+    reducer: ee.Reducer.first(),
     geometry: pt,
     scale: 10,
     maxPixels: 1e13
   });
 
-  // evaluate แล้วแสดงใน UI
-  reduction.evaluate(function(res) {
+  dnValues.evaluate(function(res) {
     if (!res) {
       outputLabel.setValue('No data at this location (maybe outside image).');
       return;
     }
-    // สร้างข้อความสวย ๆ
     var lines = ['Sample at: ' + coords.lat.toFixed(6) + ', ' + coords.lon.toFixed(6)];
-    Object.keys(res).forEach(function(k) {
-      var v = res[k];
-      lines.push(k + ' : ' + v);
+    // แปลงเป็น percent: DN * 0.01  (เท่ากับ DN/100)
+    bandsToSample.forEach(function(b) {
+      var dn = res[b];
+      if (dn === null || dn === undefined) {
+        lines.push(b + ' : no data');
+      } else {
+        var pct = dn * 0.01;
+        lines.push(b + ' : ' + pct.toFixed(3) + ' %');
+      }
     });
-    lines.push('หมายเหตุ: ค่าอาจถูกสเกล (e.g., หารด้วย 10000 เพื่อเป็น reflectance).');
+
+    // ตัวอย่าง NDVI = (NIR - RED) / (NIR + RED)
+    var dnN = res['B8'];
+    var dnR = res['B4'];
+    if ((dnN === null) || (dnR === null)) {
+      lines.push('NDVI% : no data');
+    } else {
+      var nir = dnN * 0.0001; // หรือใช้ percent/100 => (dn*0.01)/100 = dn*0.0001
+      var red = dnR * 0.0001;
+      var ndvi = (nir - red) / (nir + red);
+      var ndvi_pct = ndvi * 100.0;
+      lines.push('NDVI : ' + ndvi.toFixed(4) + '  (' + ndvi_pct.toFixed(2) + ' %)');
+    }
+
+    lines.push('หมายเหตุ: ค่านี้เป็น % (0-100) ซึ่งได้จาก DN * 0.01)');
     outputLabel.setValue(lines.join('\n'));
   });
 });
