@@ -1,273 +1,78 @@
-def mask_s2_clouds_reflectance(image):
-    """Masks clouds in Sentinel-2 SR and scales to reflectance (0–1)."""
-    qa = image.select('QA60')
-    cloud_bit_mask = 1 << 10
-    cirrus_bit_mask = 1 << 11
-    mask = (
-        qa.bitwiseAnd(cloud_bit_mask)
-        .eq(0)
-        .And(qa.bitwiseAnd(cirrus_bit_mask).eq(0))
-    )
-    return image.updateMask(mask).divide(10000)  # scale 0–1
+import pandas as pd
+from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_percentage_error
+import numpy as np
 
-# -----------------------------
-# Cloud Mask + DN scale (Sentinel-2 → THEOS-style DN 0–100)
-# -----------------------------
-def mask_s2_clouds_dn(image):
-    qa = image.select('QA60')
-    cloud_bit_mask = 1 << 10
-    cirrus_bit_mask = 1 << 11
-    mask = qa.bitwiseAnd(cloud_bit_mask).eq(0).And(qa.bitwiseAnd(cirrus_bit_mask).eq(0))
-    dn_image = image.divide(10000).multiply(100).toUint16()
-    return dn_image.updateMask(mask)
+# Assuming the following variables are available from previous model training cells:
+# r2_linear, rmse_linear, mae_linear (from cell eb9c4f59)
+# r2_tndvi_cube_root, rmse_tndvi_cube_root, mae_tndvi_cube_root (from cell da88bfa4, note these are for the transformed AGB)
+# r2_rf, rmse_rf, mae_rf (from cell okpYDH9B8LB7)
+# r2_xgb, rmse_xgb (from cell H1lF41zo-fdn) # Note: MAE was not calculated for XGBoost
+# r2_svr, rmse_svr (from cell HID318t4_B3g) # Note: MAE was not calculated for SVR
+# r2_dt, rmse_dt (from cell MgyNrMdt_Hmg) # Note: MAE was not calculated for Decision Tree
 
-# -----------------------------
-@app.route('/')
-def index():
-    return render_template('index.html')
+# Function to calculate Adjusted R-squared
+def adjusted_r2(r2, n, k):
+    return 1 - ((1 - r2) * (n - 1)) / (n - k - 1)
 
-# -----------------------------
-# Endpoint: ดึง Sentinel-2 และ THEOS-style map tiles
-# -----------------------------
-@app.route('/get_map', methods=['POST'])
-def get_map():
-    start = request.json['start']
-    end = request.json['end']
+# Calculate number of observations (n) and number of features (k) for each model
+n_test = len(y_test)
+k_linear_all = X_test.shape[1] # For Linear Regression with all features
+k_linear_tndvi = 1 # For Linear Regression with TNDVI
+k_rf = X_test.shape[1] # For Random Forest (using all features)
+k_xgb = X_test.shape[1] # For XGBoost (using all features)
+k_svr = X_test.shape[1] # For SVR (using all features)
+k_dt = X_test.shape[1] # For Decision Tree (using all features)
 
-    # Sentinel-2 Surface Reflectance (0–1)
-    collection_ref = (
-        ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
-        .filterDate(start, end)
-        .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
-        .map(mask_s2_clouds_reflectance)
-    )
-    image_ref = collection_ref.mean()
 
-    vis_sentinel = {'bands': ['B4', 'B3', 'B2'], 'min': 0.0, 'max': 0.3, 'gamma': 1.0}
-    map_id_sentinel = ee.Image(image_ref).getMapId(vis_sentinel)
+# Calculate Adjusted R-squared for each model
+adj_r2_linear_all = adjusted_r2(r2_linear, n_test, k_linear_all)
+adj_r2_linear_tndvi = adjusted_r2(r2_tndvi_cube_root, n_test, k_linear_tndvi) # Note: This is for the transformed AGB
+adj_r2_rf = adjusted_r2(r2_score(y_test, y_pred_rf), n_test, k_rf)
+adj_r2_xgb = adjusted_r2(r2_score(y_test, y_pred_xgb), n_test, k_xgb)
+adj_r2_svr = adjusted_r2(r2_score(y_test, y_pred_svr), n_test, k_svr)
+adj_r2_dt = adjusted_r2(r2_score(y_test, y_pred_dt), n_test, k_dt)
 
-    # THEOS-style DN
-    collection_dn = (
-        ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
-        .filterDate(start, end)
-        .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
-        .map(mask_s2_clouds_dn)
-    )
-    image_dn = collection_dn.mean()
+# Calculate MAPE and Accuracy for each model
+mape_linear_all = mean_absolute_percentage_error(y_test, y_pred_linear) * 100
+accuracy_linear_all = 100 - mape_linear_all
 
-    vis_theos = {'bands': ['B4', 'B3', 'B2'], 'min': 0, 'max': 100, 'gamma': 1.0}
-    map_id_theos = ee.Image(image_dn).getMapId(vis_theos)
+mape_linear_tndvi = mean_absolute_percentage_error(np.power(y_test_cube_root_agb, 3), np.power(y_pred_cube_root_agb, 3)) * 100 # Calculate on inverse transformed data
+accuracy_linear_tndvi = 100 - mape_linear_tndvi
 
-    return jsonify({
-        'sentinel_url': map_id_sentinel['tile_fetcher'].url_format,
-        'theos_url': map_id_theos['tile_fetcher'].url_format
-    })
+mape_rf = mean_absolute_percentage_error(y_test, y_pred_rf) * 100
+accuracy_rf = 100 - mape_rf
 
-# -----------------------------
-# Endpoint: โหมด 1 จุด (Pixel)
-# -----------------------------
-@app.route('/get_pixel', methods=['POST'])
-def get_pixel():
-    lat = float(request.json['lat'])
-    lon = float(request.json['lon'])
-    start = request.json['start']
-    end = request.json['end']
+mape_xgb = mean_absolute_percentage_error(y_test, y_pred_xgb) * 100
+accuracy_xgb = 100 - mape_xgb
 
-    point = ee.Geometry.Point([lon, lat])
+mape_svr = mean_absolute_percentage_error(y_test, y_pred_svr) * 100
+accuracy_svr = 100 - mape_svr
 
-    collection = (
-        ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
-        .filterDate(start, end)
-        .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
-        .map(mask_s2_clouds_reflectance)
-    )
+mape_dt = mean_absolute_percentage_error(y_test, y_pred_dt) * 100
+accuracy_dt = 100 - mape_dt
 
-    image = collection.mean()
 
-    bands = image.reduceRegion(
-        reducer=ee.Reducer.first(),
-        geometry=point,
-        scale=10
-    )
-
-    pixel_data = bands.getInfo()
-
-    try:
-        blue = float(pixel_data.get("B2", 0))
-        green = float(pixel_data.get("B3", 0))
-        red = float(pixel_data.get("B4", 0))
-        nir = float(pixel_data.get("B8", 0))
-    except:
-        return jsonify({"error": "invalid pixel values"})
-
-    # ---- Pipeline model ----
-    X = np.array([[blue, green, red, nir]])
-    X_scaled = scaler_X.transform(X)
-    y_pred_scaled = mlp_model.predict(X_scaled)
-    field_reflectance = scaler_y.inverse_transform(y_pred_scaled)
-
-    ref_X_scaled = ref_scaler_X.transform(field_reflectance)
-    ref_y_pred_scaled = ref_model.predict(ref_X_scaled)
-    ref_field_reflectance = ref_scaler_y.inverse_transform(ref_y_pred_scaled)
-    ref_blue, ref_green, ref_red, ref_nir = ref_field_reflectance.ravel()
-
-    indices = calculate_indices(ref_blue, ref_green, ref_red, ref_nir)
-
-    idx_vals = np.array([[indices["NDVI"], indices["TNDVI"], indices["SR"], indices["SAVI"], indices["MSAVI2"]]])
-    idx_scaled = svr_scaler_X.transform(idx_vals)
-    agb_scaled = svr_model.predict(idx_scaled)
-    agb = svr_scaler_y.inverse_transform(agb_scaled.reshape(-1, 1)).ravel()[0]
-
-    pixel_data.update({
-        "field_reflectance": {
-            "Blue": ref_blue,
-            "Green": ref_green,
-            "Red": ref_red,
-            "NIR": ref_nir
-        },
-        "indices": indices,
-        "AGB": agb
-    })
-
-    return jsonify(pixel_data)
----
-// Sentinel-2 SR true surface reflectance (0–1)
-// Click anywhere on the map to view reflectance values
-
-var start = '2019-06-01';
-var end = '2019-07-31';
-
-// Load Sentinel-2 SR Harmonized
-var s2 = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
-  .filterDate(start, end)
-  .filterBounds(Map.getCenter())
-  .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 30))
-  .sort('CLOUDY_PIXEL_PERCENTAGE');
-
-var image = ee.Image(s2.first());
-if (!image) {
-  print('No image found for given filters.');
-} else {
-  Map.addLayer(image, {bands: ['B4','B3','B2'], min: 0, max: 3000}, 'True color');
-  Map.centerObject(image, 10);
+# Create a dictionary to store the metrics
+model_performance = {
+    'Model': ['Linear Regression (All Features)', 'Linear Regression (TNDVI - Cuberoot AGB)', 'Random Forest', 'XGBoost', 'SVR (RBF)', 'Decision Tree'],
+    'R²': [r2_linear, r2_tndvi_cube_root, r2_score(y_test, y_pred_rf), r2_score(y_test, y_pred_xgb), r2_score(y_test, y_pred_svr), r2_score(y_test, y_pred_dt)],
+    'Adj.R²': [adj_r2_linear_all, adj_r2_linear_tndvi, adj_r2_rf, adj_r2_xgb, adj_r2_svr, adj_r2_dt],
+    'RMSE': [rmse_linear, rmse_tndvi_cube_root, np.sqrt(mean_squared_error(y_test, y_pred_rf)), np.sqrt(mean_squared_error(y_test, y_pred_xgb)), np.sqrt(mean_squared_error(y_test, y_pred_svr)), np.sqrt(mean_squared_error(y_test, y_pred_dt))],
+    'MAPE (%)': [mape_linear_all, mape_linear_tndvi, mape_rf, mape_xgb, mape_svr, mape_dt],
+    'Accuracy (%)': [accuracy_linear_all, accuracy_linear_tndvi, accuracy_rf, accuracy_xgb, accuracy_svr, accuracy_dt]
 }
 
-var panel = ui.Panel({style: {position: 'bottom-right', padding: '8px'}});
-panel.add(ui.Label('Click map → Reflectance (0–1)'));
-var label = ui.Label('');
-panel.add(label);
-Map.add(panel);
+# Create a pandas DataFrame
+performance_df = pd.DataFrame(model_performance)
 
-Map.onClick(function(coords) {
-  if (!image) return;
-  var pt = ee.Geometry.Point([coords.lon, coords.lat]);
-  var bands = ['B2','B3','B4','B8']; // Blue, Green, Red, NIR
+# Display the DataFrame
+print("Model Performance Comparison (Test Set):")
+display(performance_df)
 
-  var res = image.select(bands).reduceRegion({
-    reducer: ee.Reducer.first(),
-    geometry: pt,
-    scale: 10,
-    maxPixels: 1e13
-  });
-
-  res.evaluate(function(v) {
-    if (!v) { label.setValue('No data here'); return; }
-
-    var lines = ['Location: ' + coords.lat.toFixed(6) + ', ' + coords.lon.toFixed(6)];
-    bands.forEach(function(b) {
-      var refl = (v[b] || 0) / 10000;   // Convert DN → reflectance
-      lines.push(b + ' = ' + refl.toFixed(4));
-    });
-
-    // NDVI (0–1)
-    var nir = (v['B8'] || 0) / 10000;
-    var red = (v['B4'] || 0) / 10000;
-    var ndvi = (nir + red === 0) ? null : (nir - red) / (nir + red);
-    lines.push('NDVI = ' + (ndvi !== null ? ndvi.toFixed(4) : 'no data'));
-
-    label.setValue(lines.join('\n'));
-  });
-});
-
----
-
-// Mean surface reflectance (0–1) in drawn polygon area
-var start = '2019-06-01';
-var end = '2019-07-31';
-
-var s2 = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
-  .filterDate(start, end)
-  .filterBounds(Map.getCenter())
-  .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 30))
-  .sort('CLOUDY_PIXEL_PERCENTAGE');
-
-var image = ee.Image(s2.first());
-if (!image) {
-  print('No image found for given filters.');
-} else {
-  Map.addLayer(image, {bands: ['B4','B3','B2'], min: 0, max: 3000}, 'True color');
-  Map.centerObject(image, 10);
-}
-
-// Drawing tools
-var draw = Map.drawingTools();
-draw.setShown(true);
-draw.layers().forEach(function(l){ draw.layers().remove(l); });
-draw.setShape('polygon');
-
-// UI
-var resultLabel = ui.Label('Results will appear here');
-var computeBtn = ui.Button('Compute mean reflectance (0–1)', function() {
-  var layers = draw.layers();
-  var geoms = [];
-  for (var i = 0; i < layers.length(); i++) {
-    var geom = layers.get(i).getEeObject();
-    if (geom) geoms.push(geom);
-  }
-  if (geoms.length === 0) {
-    ui.alert('Please draw a polygon first.');
-    return;
-  }
-
-  var region = ee.FeatureCollection(geoms).geometry();
-  var bands = ['B2','B3','B4','B8'];
-
-  var meanDN = image.select(bands).reduceRegion({
-    reducer: ee.Reducer.mean(),
-    geometry: region,
-    scale: 10,
-    maxPixels: 1e13
-  });
-
-  meanDN.evaluate(function(v) {
-    if (!v) { resultLabel.setValue('No data in region'); return; }
-
-    var lines = ['Mean reflectance (0–1):'];
-    bands.forEach(function(b) {
-      var refl = (v[b] || 0) / 10000;
-      lines.push(b + ' = ' + refl.toFixed(4));
-    });
-
-    var nir = (v['B8'] || 0) / 10000;
-    var red = (v['B4'] || 0) / 10000;
-    var ndvi = (nir + red === 0) ? null : (nir - red) / (nir + red);
-    lines.push('NDVI = ' + (ndvi !== null ? ndvi.toFixed(4) : 'no data'));
-
-    resultLabel.setValue(lines.join('\n'));
-  });
-});
-
-var clearBtn = ui.Button('Clear shapes', function(){
-  for (var i = draw.layers().length() - 1; i >= 0; i--)
-    draw.layers().remove(draw.layers().get(i));
-  resultLabel.setValue('Shapes cleared.');
-});
-
-var panel = ui.Panel([
-  ui.Label('วาด polygon แล้วกดปุ่มเพื่อหาค่าเฉลี่ย Reflectance (0–1)'),
-  computeBtn, clearBtn, resultLabel
-]);
-panel.style().set({position: 'bottom-right', padding: '8px'});
-Map.add(panel);
-
-
+Model	R²	Adj.R²	RMSE	MAPE (%)	Accuracy (%)
+0	Linear Regression (All Features)	0.410390	3.358439	11.075616	18.786677	81.213323
+1	Linear Regression (TNDVI - Cuberoot AGB)	0.682319	0.576426	0.241980	18.210292	81.789708
+2	Random Forest	0.708234	2.167064	7.791172	14.649395	85.350605
+3	XGBoost	0.553037	2.787851	9.643201	15.908003	84.091997
+4	SVR (RBF)	0.938516	1.245937	3.576574	9.203767	90.796233
+5	Decision Tree	0.593202	2.627191	9.199723	11.283945	88.716055
