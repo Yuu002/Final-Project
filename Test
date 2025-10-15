@@ -1,43 +1,66 @@
-// =========================
-// 🔹 STEP 1: เลือกพื้นที่
-// =========================
-// ใช้เครื่องมือวาด (ด้านซ้ายบนของแผนที่) วาด polygon หรือ rectangle แล้วตั้งชื่อเป็น 'geometry'
-// ตัวอย่าง:
-// var geometry = ee.Geometry.Polygon([[[100.523, 13.736], [100.526, 13.736], [100.526, 13.734], [100.523, 13.734]]]);
+// === Sample 1 pixel on map (Map click) ===
+// ใช้: COPERNICUS/S2_SR_HARMONIZED
+// วิธีใช้: run script แล้วคลิกที่จุดบนแผนที่ ผลลัพธ์จะแสดงใน UI panel ด้านขวา
 
-// =========================
-// 🔹 STEP 2: ดึงภาพ Sentinel-2
-// =========================
+// เลือกภาพ (ตัวอย่าง: ภาพที่ไม่มีเมฆมากสุดในช่วงที่ต้องการ)
+var start = '2019-06-01';
+var end = '2019-07-31';
 var s2 = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
-  .filterBounds(geometry)                       // พื้นที่ที่วาดไว้
-  .filterDate('2025-01-01', '2025-01-31')      // ช่วงเวลา
-  .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 10))  // กรองภาพเมฆน้อยกว่า 10%
-  .median()                                    // รวมภาพในช่วงเวลาให้เป็นภาพเดียว
-  .select(['B2', 'B3', 'B4', 'B8']);           // เลือกแบนด์ที่ต้องการ
+          .filterDate(start, end)
+          .filterBounds(Map.getCenter()) // ปรับถ้าต้องการพื้นที่เฉพาะ
+          .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 30))
+          .sort('CLOUDY_PIXEL_PERCENTAGE')
+          ;
 
-// =========================
-// 🔹 STEP 3: แสดงภาพบนแผนที่
-// =========================
-Map.centerObject(geometry, 13);
-Map.addLayer(s2, {min: 0, max: 3000, bands: ['B4', 'B3', 'B2']}, 'Sentinel-2 RGB');
+// เอาภาพแรก (ประกอบการสาธิต)
+var image = ee.Image(s2.first());
+if (!image) {
+  print('No image found for given filters. ปรับช่วงวันที่หรือเงื่อนไข cloud.');
+} else {
+  // แสดงภาพ (true color)
+  Map.addLayer(image, {bands: ['B4','B3','B2'], min: 0, max: 3000}, 'S2 true color');
+  Map.centerObject(image, 10);
+}
 
-// =========================
-// 🔹 STEP 4: คำนวณค่าเฉลี่ยในพื้นที่
-// =========================
-var meanDict = s2.reduceRegion({
-  reducer: ee.Reducer.mean(),
-  geometry: geometry,
-  scale: 10,          // ความละเอียด 10 เมตรต่อพิกเซล
-  bestEffort: true
+// UI panel สำหรับแสดงผล
+var resultPanel = ui.Panel({
+  style: {position: 'bottom-right', padding: '8px'}
 });
+resultPanel.add(ui.Label('Click on the map to sample 1 pixel (Sentinel-2 SR).'));
+var outputLabel = ui.Label('');
+resultPanel.add(outputLabel);
+Map.add(resultPanel);
 
-// =========================
-// 🔹 STEP 5: แสดงผลลัพธ์ใน Console
-// =========================
-print('ค่าเฉลี่ยการสะท้อนแสงแต่ละแบนด์ (×10000):', meanDict);
+// ฟังก์ชันเมื่อคลิกแผนที่
+Map.onClick(function(coords) {
+  if (!image) {
+    outputLabel.setValue('No image loaded.');
+    return;
+  }
+  var pt = ee.Geometry.Point([coords.lon, coords.lat]);
+  // เลือกแบนด์ที่ต้องการ (เปลี่ยนชื่อหากต้องการ)
+  var bands = image.bandNames();
+  // reduceRegion เพื่อนำค่าพิกเซลที่ตำแหน่งนั้น (scale = 10m)
+  var reduction = image.reduceRegion({
+    reducer: ee.Reducer.first(), // pixel เดียว -> ใช้ first() หรือ mean()
+    geometry: pt,
+    scale: 10,
+    maxPixels: 1e13
+  });
 
-// ถ้าอยากแปลงเป็นหน่วย reflectance จริง (0–1)
-var trueReflectance = ee.Dictionary(meanDict).map(function(k, v) {
-  return ee.Number(v).divide(10000);
+  // evaluate แล้วแสดงใน UI
+  reduction.evaluate(function(res) {
+    if (!res) {
+      outputLabel.setValue('No data at this location (maybe outside image).');
+      return;
+    }
+    // สร้างข้อความสวย ๆ
+    var lines = ['Sample at: ' + coords.lat.toFixed(6) + ', ' + coords.lon.toFixed(6)];
+    Object.keys(res).forEach(function(k) {
+      var v = res[k];
+      lines.push(k + ' : ' + v);
+    });
+    lines.push('หมายเหตุ: ค่าอาจถูกสเกล (e.g., หารด้วย 10000 เพื่อเป็น reflectance).');
+    outputLabel.setValue(lines.join('\n'));
+  });
 });
-print('ค่าเฉลี่ย reflectance (0–1):', trueReflectance);
