@@ -1,4 +1,5 @@
-// Sample 1 pixel on Sentinel-2 SR (Reflectance in percent, 0–100%)
+// Sentinel-2 SR true surface reflectance (0–1)
+// Click anywhere on the map to view reflectance values
 
 var start = '2019-06-01';
 var end = '2019-07-31';
@@ -18,53 +19,46 @@ if (!image) {
   Map.centerObject(image, 10);
 }
 
-// UI
-var resultPanel = ui.Panel({style: {position: 'bottom-right', padding: '8px'}});
-resultPanel.add(ui.Label('Click on map → reflectance (%)'));
-var outputLabel = ui.Label('');
-resultPanel.add(outputLabel);
-Map.add(resultPanel);
+var panel = ui.Panel({style: {position: 'bottom-right', padding: '8px'}});
+panel.add(ui.Label('Click map → Reflectance (0–1)'));
+var label = ui.Label('');
+panel.add(label);
+Map.add(panel);
 
 Map.onClick(function(coords) {
   if (!image) return;
   var pt = ee.Geometry.Point([coords.lon, coords.lat]);
   var bands = ['B2','B3','B4','B8']; // Blue, Green, Red, NIR
 
-  // Get DN
-  var result = image.select(bands).reduceRegion({
+  var res = image.select(bands).reduceRegion({
     reducer: ee.Reducer.first(),
     geometry: pt,
     scale: 10,
     maxPixels: 1e13
   });
 
-  result.evaluate(function(res) {
-    if (!res) {
-      outputLabel.setValue('No data here');
-      return;
-    }
+  res.evaluate(function(v) {
+    if (!v) { label.setValue('No data here'); return; }
 
     var lines = ['Location: ' + coords.lat.toFixed(6) + ', ' + coords.lon.toFixed(6)];
     bands.forEach(function(b) {
-      var dn = res[b];
-      if (dn !== null && dn !== undefined) {
-        var reflPct = dn / 100; // DN → reflectance (%)
-        lines.push(b + ' = ' + reflPct.toFixed(2) + ' %');
-      }
+      var refl = (v[b] || 0) / 10000;   // Convert DN → reflectance
+      lines.push(b + ' = ' + refl.toFixed(4));
     });
 
-    // NDVI (%)
-    var nir = res['B8'] / 10000;
-    var red = res['B4'] / 10000;
-    var ndvi = (nir - red) / (nir + red);
-    lines.push('NDVI = ' + (ndvi * 100).toFixed(2) + ' %');
+    // NDVI (0–1)
+    var nir = (v['B8'] || 0) / 10000;
+    var red = (v['B4'] || 0) / 10000;
+    var ndvi = (nir + red === 0) ? null : (nir - red) / (nir + red);
+    lines.push('NDVI = ' + (ndvi !== null ? ndvi.toFixed(4) : 'no data'));
 
-    outputLabel.setValue(lines.join('\n'));
+    label.setValue(lines.join('\n'));
   });
 });
+
 ---
 
-// Compute mean reflectance (percent) in drawn polygon areas
+// Mean surface reflectance (0–1) in drawn polygon area
 var start = '2019-06-01';
 var end = '2019-07-31';
 
@@ -90,7 +84,7 @@ draw.setShape('polygon');
 
 // UI
 var resultLabel = ui.Label('Results will appear here');
-var computeBtn = ui.Button('Compute mean reflectance (%)', function() {
+var computeBtn = ui.Button('Compute mean reflectance (0–1)', function() {
   var layers = draw.layers();
   var geoms = [];
   for (var i = 0; i < layers.length(); i++) {
@@ -104,31 +98,27 @@ var computeBtn = ui.Button('Compute mean reflectance (%)', function() {
 
   var region = ee.FeatureCollection(geoms).geometry();
   var bands = ['B2','B3','B4','B8'];
-  var result = image.select(bands).reduceRegion({
+
+  var meanDN = image.select(bands).reduceRegion({
     reducer: ee.Reducer.mean(),
     geometry: region,
     scale: 10,
     maxPixels: 1e13
   });
 
-  result.evaluate(function(res) {
-    if (!res) {
-      resultLabel.setValue('No data in drawn area');
-      return;
-    }
+  meanDN.evaluate(function(v) {
+    if (!v) { resultLabel.setValue('No data in region'); return; }
 
-    var lines = ['Mean reflectance (%)'];
+    var lines = ['Mean reflectance (0–1):'];
     bands.forEach(function(b) {
-      var dn = res[b];
-      if (dn !== null && dn !== undefined) {
-        lines.push(b + ' = ' + (dn / 100).toFixed(2) + ' %');
-      }
+      var refl = (v[b] || 0) / 10000;
+      lines.push(b + ' = ' + refl.toFixed(4));
     });
 
-    var nir = res['B8'] / 10000;
-    var red = res['B4'] / 10000;
-    var ndvi = (nir - red) / (nir + red);
-    lines.push('NDVI = ' + (ndvi * 100).toFixed(2) + ' %');
+    var nir = (v['B8'] || 0) / 10000;
+    var red = (v['B4'] || 0) / 10000;
+    var ndvi = (nir + red === 0) ? null : (nir - red) / (nir + red);
+    lines.push('NDVI = ' + (ndvi !== null ? ndvi.toFixed(4) : 'no data'));
 
     resultLabel.setValue(lines.join('\n'));
   });
@@ -141,7 +131,7 @@ var clearBtn = ui.Button('Clear shapes', function(){
 });
 
 var panel = ui.Panel([
-  ui.Label('วาด polygon แล้วกดปุ่มเพื่อหาค่าเฉลี่ย Reflectance (%)'),
+  ui.Label('วาด polygon แล้วกดปุ่มเพื่อหาค่าเฉลี่ย Reflectance (0–1)'),
   computeBtn, clearBtn, resultLabel
 ]);
 panel.style().set({position: 'bottom-right', padding: '8px'});
