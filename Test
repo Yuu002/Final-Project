@@ -1,78 +1,21 @@
-import pandas as pd
-from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_percentage_error
-import numpy as np
+# indices.py
+def calculate_indices(blue, green, red, nir):
+    """คำนวณดัชนีพืชพรรณหลัก 5 ค่า (ให้รองรับค่าติดลบได้)"""
+    try:
+        ndvi = (nir - red) / (nir + red) if (nir + red) != 0 else 0
+        tndvi = ((ndvi + 0.5) ** 0.5) if (ndvi + 0.5) >= 0 else -((-ndvi - 0.5) ** 0.5)
+        sr = nir / red if red != 0 else 0
+        savi = ((1 + 1.5) * (nir - red)) / (nir + red + 0.5) if (nir + red + 0.5) != 0 else 0
+        msavi2 = (2 * nir + 1 - ((2 * nir + 1) ** 2 - 8 * (nir - red)) ** 0.5) / 2 \
+            if ((2 * nir + 1) ** 2 - 8 * (nir - red)) >= 0 else 0
 
-# Assuming the following variables are available from previous model training cells:
-# r2_linear, rmse_linear, mae_linear (from cell eb9c4f59)
-# r2_tndvi_cube_root, rmse_tndvi_cube_root, mae_tndvi_cube_root (from cell da88bfa4, note these are for the transformed AGB)
-# r2_rf, rmse_rf, mae_rf (from cell okpYDH9B8LB7)
-# r2_xgb, rmse_xgb (from cell H1lF41zo-fdn) # Note: MAE was not calculated for XGBoost
-# r2_svr, rmse_svr (from cell HID318t4_B3g) # Note: MAE was not calculated for SVR
-# r2_dt, rmse_dt (from cell MgyNrMdt_Hmg) # Note: MAE was not calculated for Decision Tree
+    except Exception:
+        ndvi, tndvi, sr, savi, msavi2 = 0, 0, 0, 0, 0
 
-# Function to calculate Adjusted R-squared
-def adjusted_r2(r2, n, k):
-    return 1 - ((1 - r2) * (n - 1)) / (n - k - 1)
-
-# Calculate number of observations (n) and number of features (k) for each model
-n_test = len(y_test)
-k_linear_all = X_test.shape[1] # For Linear Regression with all features
-k_linear_tndvi = 1 # For Linear Regression with TNDVI
-k_rf = X_test.shape[1] # For Random Forest (using all features)
-k_xgb = X_test.shape[1] # For XGBoost (using all features)
-k_svr = X_test.shape[1] # For SVR (using all features)
-k_dt = X_test.shape[1] # For Decision Tree (using all features)
-
-
-# Calculate Adjusted R-squared for each model
-adj_r2_linear_all = adjusted_r2(r2_linear, n_test, k_linear_all)
-adj_r2_linear_tndvi = adjusted_r2(r2_tndvi_cube_root, n_test, k_linear_tndvi) # Note: This is for the transformed AGB
-adj_r2_rf = adjusted_r2(r2_score(y_test, y_pred_rf), n_test, k_rf)
-adj_r2_xgb = adjusted_r2(r2_score(y_test, y_pred_xgb), n_test, k_xgb)
-adj_r2_svr = adjusted_r2(r2_score(y_test, y_pred_svr), n_test, k_svr)
-adj_r2_dt = adjusted_r2(r2_score(y_test, y_pred_dt), n_test, k_dt)
-
-# Calculate MAPE and Accuracy for each model
-mape_linear_all = mean_absolute_percentage_error(y_test, y_pred_linear) * 100
-accuracy_linear_all = 100 - mape_linear_all
-
-mape_linear_tndvi = mean_absolute_percentage_error(np.power(y_test_cube_root_agb, 3), np.power(y_pred_cube_root_agb, 3)) * 100 # Calculate on inverse transformed data
-accuracy_linear_tndvi = 100 - mape_linear_tndvi
-
-mape_rf = mean_absolute_percentage_error(y_test, y_pred_rf) * 100
-accuracy_rf = 100 - mape_rf
-
-mape_xgb = mean_absolute_percentage_error(y_test, y_pred_xgb) * 100
-accuracy_xgb = 100 - mape_xgb
-
-mape_svr = mean_absolute_percentage_error(y_test, y_pred_svr) * 100
-accuracy_svr = 100 - mape_svr
-
-mape_dt = mean_absolute_percentage_error(y_test, y_pred_dt) * 100
-accuracy_dt = 100 - mape_dt
-
-
-# Create a dictionary to store the metrics
-model_performance = {
-    'Model': ['Linear Regression (All Features)', 'Linear Regression (TNDVI - Cuberoot AGB)', 'Random Forest', 'XGBoost', 'SVR (RBF)', 'Decision Tree'],
-    'R²': [r2_linear, r2_tndvi_cube_root, r2_score(y_test, y_pred_rf), r2_score(y_test, y_pred_xgb), r2_score(y_test, y_pred_svr), r2_score(y_test, y_pred_dt)],
-    'Adj.R²': [adj_r2_linear_all, adj_r2_linear_tndvi, adj_r2_rf, adj_r2_xgb, adj_r2_svr, adj_r2_dt],
-    'RMSE': [rmse_linear, rmse_tndvi_cube_root, np.sqrt(mean_squared_error(y_test, y_pred_rf)), np.sqrt(mean_squared_error(y_test, y_pred_xgb)), np.sqrt(mean_squared_error(y_test, y_pred_svr)), np.sqrt(mean_squared_error(y_test, y_pred_dt))],
-    'MAPE (%)': [mape_linear_all, mape_linear_tndvi, mape_rf, mape_xgb, mape_svr, mape_dt],
-    'Accuracy (%)': [accuracy_linear_all, accuracy_linear_tndvi, accuracy_rf, accuracy_xgb, accuracy_svr, accuracy_dt]
-}
-
-# Create a pandas DataFrame
-performance_df = pd.DataFrame(model_performance)
-
-# Display the DataFrame
-print("Model Performance Comparison (Test Set):")
-display(performance_df)
-
-Model	R²	Adj.R²	RMSE	MAPE (%)	Accuracy (%)
-0	Linear Regression (All Features)	0.410390	3.358439	11.075616	18.786677	81.213323
-1	Linear Regression (TNDVI - Cuberoot AGB)	0.682319	0.576426	0.241980	18.210292	81.789708
-2	Random Forest	0.708234	2.167064	7.791172	14.649395	85.350605
-3	XGBoost	0.553037	2.787851	9.643201	15.908003	84.091997
-4	SVR (RBF)	0.938516	1.245937	3.576574	9.203767	90.796233
-5	Decision Tree	0.593202	2.627191	9.199723	11.283945	88.716055
+    return {
+        "NDVI": ndvi,
+        "TNDVI": tndvi,
+        "SR": sr,
+        "SAVI": savi,
+        "MSAVI2": msavi2
+    }
